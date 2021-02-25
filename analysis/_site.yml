@@ -1,0 +1,51 @@
+name: donors-crackdowns-aid
+exclude:
+- Analysis
+- Data
+- Miscellaneous
+- Output
+- Presentations
+- Readings
+- Sandbox
+- Writing
+- lib
+- Icon?
+- Makefile
+- LICENSE.html
+- README.html
+navbar:
+  title: NGO Crackdowns and Foreign Aid
+  type: inverse
+  right:
+  - text: Process and merge data
+    icon: fas fa-table
+    href: 01_get-merge-data.html
+  - text: Non-model analysis
+    icon: fas fa-chart-bar
+    href: 02_non-model-analysis.html
+  - text: General models
+    icon: fas fa-chart-bar
+    href: 03_general-models.html
+  - text: Marginal structural models
+    icon: fas fa-chart-bar
+    href: 04_msms.html
+output:
+  html_document:
+    theme: journal
+    css: html/fixes.css
+    include:
+      after_body: html/footer.html
+    highlight: kate
+    code_folding: show
+    code_download: yes
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+    toc_depth: 4
+    fig_height: 4
+    fig_width: 7
+    lib_dir: site_libs
+    self_contained: no
+output_dir: _site
+new_session: yes
