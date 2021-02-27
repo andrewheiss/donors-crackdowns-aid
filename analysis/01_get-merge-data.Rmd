@@ -970,10 +970,12 @@ disasters <- disasters_raw %>%
          dis_affected = `No Affected`, dis_homeless = `No Homeless`,
          dis_total_affected = `Total Affected`, dis_total_damage = `Total Damages ('000 US$)`)
 
-disasters_groups <- disasters %>% 
+disasters_summarized <- disasters %>% 
   group_by(gwcode, year, group) %>% 
-  summarize(across(starts_with("dis_"), ~sum(., na.rm = TRUE))) %>% 
+  summarize(across(starts_with("dis_"), ~sum(., na.rm = TRUE)),
+            dis_count = n()) %>% 
   ungroup() %>% 
+  filter(group == "Natural") %>% 
   pivot_longer(names_to = "name", values_to = "value", starts_with("dis_")) %>% 
   mutate(group = str_to_lower(group)) %>% 
   unite(name, group, name) %>% 
@@ -981,7 +983,7 @@ disasters_groups <- disasters %>%
   mutate(year = as.numeric(year)) %>% 
   filter(year > 1980)
 
-disasters_groups %>% glimpse()
+disasters_summarized %>% glimpse()
 ```
 
 
@@ -1079,7 +1081,7 @@ country_level_data <- panel_skeleton %>%
   # Treat NAs in conflicts as FALSE
   mutate(internal_conflict = ifelse(is.na(internal_conflict),
                                     FALSE, internal_conflict)) %>%
-  left_join(select(disasters_groups, gwcode, year, starts_with("natural_")), 
+  left_join(disasters_summarized, 
             by = c("gwcode", "year")) %>% 
   # NAs in disasters are really 0, especially when occurrence is 0
   mutate_at(vars(starts_with("natural_")), ~ifelse(is.na(.), 0, .)) %>%
@@ -1256,7 +1258,8 @@ country_aid_final <- country_aid_complete %>%
   # Lag/lead/diff things within countries
   group_by(gwcode) %>% 
   # Determine if there was conflict in the past 5 years
-  mutate(internal_conflict_past_5 = check_last_k(internal_conflict, 5)) %>% 
+  mutate(internal_conflict_past_5 = check_last_k(internal_conflict, 5),
+         natural_dis_past_5 = check_last_k(natural_dis_count >= 1, 5)) %>% 
   # Indicate changes in laws
   mutate(across(c(advocacy, entry, funding, barriers_total),
                 list(new = ~. - lag(.),
