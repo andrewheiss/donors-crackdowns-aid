@@ -1,0 +1,473 @@
+---
+title: "Marginal structural models and inverse probability weights"
+author: "Suparna Chaudhry and Andrew Heiss"
+date: "`r format(Sys.time(), '%F')`"
+output: 
+  html_document:
+    code_folding: show
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.retina = 3,
+                      tidy.opts = list(width.cutoff = 120),  # For code
+                      options(width = 90))  # For output
+
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r load-libraries, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggdag)
+library(dagitty)
+library(brms)
+library(tidybayes)
+library(fixest)
+library(lme4)
+library(broom)
+library(broom.mixed)
+library(modelsummary)
+library(patchwork)
+library(tictoc)
+library(here)
+
+source(here("lib", "graphics.R"))
+
+my_seed <- 1234
+set.seed(my_seed)
+
+cumprod_na <- function(x) {
+  x[is.na(x)] <- 1
+  return(cumprod(x))
+}
+
+# Via https://stackoverflow.com/a/55323097/120898
+lhs <- function(x) {
+  if (attr(terms(as.formula(x)), which = "response")) {
+    all.vars(x)[1]
+  } else {
+    NULL
+  }
+}
+
+options(mc.cores = parallel::detectCores(),  # Use all possible cores
+        brms.backend = "cmdstanr")
+
+CHAINS <- 4
+ITER <- 2000
+WARMUP <- 1000
+BAYES_SEED <- 1234
+```
+
+```{r load-data-add-lags}
+df_country_aid <- readRDS(here("data", "derived_data", "df_country_aid.rds"))
+df_autocracies <- readRDS(here("data", "derived_data", "df_autocracies.rds"))
+
+df_country_aid_lags <- df_country_aid %>% 
+  group_by(gwcode) %>% 
+  mutate(across(c(barriers_total, advocacy, entry, funding, 
+                  total_oda_log, v2xcs_ccsi),
+                list(l1 = ~lag(., n = 1)))) %>% 
+  ungroup()
+
+df_country_aid_laws <- filter(df_country_aid_lags, laws)
+```
+
+
+# Causal model
+
+```{r}
+panel_dag <- dagitty('dag {
+"Aid[t-i]" [pos="2,2"]
+"Aid[t-1]" [pos="4,2"]
+"Aid[t]" [pos="6,2"]
+"Restrictions[t-i]" [pos="1,1"]
+"Restrictions[t-1]" [pos="3,1"]
+"Restrictions[t]" [pos="5,1"]
+"Z[t-i]" [pos="1,3"]
+"Z[t-1]" [pos="3,3"]
+"Z[t]" [pos="5,3"]
+"Aid[t-1]" -> "Aid[t]"
+"Aid[t-1]" -> "Restrictions[t]"
+"Aid[t-i]" -> "Aid[t-1]"
+"Aid[t-i]" -> "Restrictions[t-1]"
+"Restrictions[t-1]" -> "Aid[t-1]"
+"Restrictions[t-1]" -> "Aid[t]"
+"Restrictions[t-1]" -> "Restrictions[t]"
+"Restrictions[t-i]" -> "Aid[t-1]"
+"Restrictions[t-i]" -> "Aid[t-i]"
+"Restrictions[t-i]" -> "Restrictions[t-1]"
+"Restrictions[t]" -> "Aid[t]"
+"Z[t-1]" -> "Aid[t-1]"
+"Z[t-1]" -> "Restrictions[t-1]"
+"Z[t-1]" -> "Z[t]"
+"Z[t-i]" -> "Aid[t-i]"
+"Z[t-i]" -> "Restrictions[t-i]"
+"Z[t-i]" -> "Z[t-1]"
+"Z[t]" -> "Aid[t]"
+"Z[t]" -> "Restrictions[t]"
+}
+') %>% 
+  tidy_dagitty() %>% 
+  mutate(var_type = case_when(
+    str_detect(name, "Aid") ~ "Aid",
+    str_detect(name, "Restrictions") ~ "Restrictions",
+    str_detect(name, "Z") ~ "Z"
+  )) %>% 
+  mutate(time_period = case_when(
+    str_detect(name, "t-1") ~ 2,
+    str_detect(name, "t-i") ~ 1,
+    TRUE ~ 3
+  )) %>% 
+  mutate(arrow_color = case_when(
+    name == "Restrictions[t]" & to == "Aid[t]" ~ "#FF4136",
+    name == "Restrictions[t-1]" & to == "Aid[t]" ~ "#FF4136",
+    TRUE ~ "grey40"
+  ))
+
+plot_panel_dag <- ggplot(panel_dag, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_edges(aes(edge_colour = arrow_color)) +
+  geom_dag_point(aes(color = var_type, alpha = time_period), size = 12) +
+  geom_dag_text(data = filter(panel_dag, var_type == "Aid"),
+                color = "black", size = 5, parse = TRUE,
+                family = "Work Sans Medium", nudge_y = 0.2, nudge_x = 0.1) +
+  geom_dag_text(data = filter(panel_dag, var_type == "Restrictions"),
+                color = "black", size = 5, parse = TRUE,
+                family = "Work Sans Medium", nudge_y = -0.25) +
+  geom_dag_text(data = filter(panel_dag, var_type == "Z"),
+                color = "black", size = 5, parse = TRUE,
+                family = "Work Sans Medium", nudge_y = 0) +
+  scale_color_manual(values = c("#B10DC9", "#FF851B", "grey60")) +
+  guides(alpha = FALSE, color = FALSE) +
+  theme_dag()
+plot_panel_dag
+
+ggsave(here("analysis", "output", "dag.pdf"), plot_panel_dag,
+       width = 16/2, height = 9/2, device = cairo_pdf)
+ggsave(here("analysis", "output", "dag.png"), plot_panel_dag,
+       width = 16/2, height = 9/2, dpi = 300, type = "cairo")
+```
+
+
+# H~1~: Donors reduce aid in response to legislation
+
+- Treatment: restrictions in $t$ (`barriers_total`, `v2xcs_ccsi`)
+- Outcome: log aid in $t$ and $t-1$ (`total_oda_log`)
+- Time-varying confounders: 
+  - Democracy
+    - Electoral democracy: `v2x_polyarchy`
+  - Wealth
+    - Wealth: `gdpcap_log`
+  - Government capacity
+    - Corruption: `v2x_corr`
+    - Civil liberties: `v2x_civlib`
+  - Unexpected shocks
+    - Internal conflict: `internal_conflict_past_5`
+    - Natural disasters: `natural_dis_count`
+  - Global integration
+    - International trade: `un_trade_pct_gdp`
+- Non-varying confounders: 
+  - Region/continent?
+
+## Naive model
+
+```{r h1-naive, message=FALSE}
+model_naive <- feols(total_oda_log ~ barriers_total + barriers_total_l1 +
+                       v2x_polyarchy + gdpcap_log +
+                       v2x_corr + v2x_civlib + 
+                       internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp |
+                       gwcode + year,
+                     data = filter(df_country_aid_lags, laws))
+tidy(model_naive)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+df_country_aid_lags <- df_country_aid_lags %>% 
+  filter(year >= 1990)
+
+model_num <- lmer(v2xcs_ccsi ~ v2xcs_ccsi_l1 + (1 | gwcode),
+                  data = df_country_aid_lags,
+                  na.action = na.exclude)
+
+model_denom <- lmer(v2xcs_ccsi ~ v2xcs_ccsi_l1 + total_oda_log_l1 +
+                      v2x_polyarchy + gdpcap_log +
+                      v2x_corr + v2x_civlib + 
+                      internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp + 
+                      (1 | gwcode),
+                    data = df_country_aid_lags,
+                    na.action = na.exclude)
+
+num_multi <- dnorm(df_country_aid_lags$v2xcs_ccsi,
+                   predict(model_num),
+                   sd(residuals(model_num), na.rm = TRUE))
+
+den_multi <- dnorm(df_country_aid_lags$v2xcs_ccsi,
+                   predict(model_denom),
+                   sd(residuals(model_denom), na.rm = TRUE))
+
+df_country_aid_weights <- df_country_aid_lags %>% 
+  ungroup() %>% 
+  mutate(weights_no_time = num_multi / den_multi) %>% 
+  group_by(gwcode) %>% 
+  mutate(ipw = cumprod_na(weights_no_time)) %>% 
+  ungroup() %>% 
+  mutate(ipw_trunc = ifelse(ipw >= 20, 20, ipw))
+
+asdf <- df_country_aid_weights %>% 
+  select(gwcode, country, year, total_oda_log, v2xcs_ccsi, weights_no_time, ipw)
+
+mean(df_country_aid_weights$ipw)
+mean(df_country_aid_weights$ipw_trunc)
+max(df_country_aid_weights$ipw)
+
+model_outcome <- lmer(total_oda_log ~ v2xcs_ccsi + v2xcs_ccsi_l1 + (1 | gwcode),
+                      data = df_country_aid_weights, weights = ipw_trunc)
+tidy(model_outcome)
+```
+
+
+## IPTW (brms)
+
+- Numerator is lagged treatment + non-varying confounders
+- Denominator is lagged treatment + lagged outcome + time-varying confounders + non-varying confounders
+
+$$
+sw = \prod^t_{t = 1} \frac{\phi(T_{it} | T_{i, t-1}, C_i)}{\phi(T_{it} | T_{i, t-1}, D_{i, t-1}, C_i)}
+$$
+
+```{r h1-weight-models}
+# Numerator ---------------------------------------------------------------
+# Formulas
+# Treatment ~ lag treatment + non-varying confounders
+formula_h1_num_total <- bf(barriers_total ~ barriers_total_l1 + (1 | gwcode))
+formula_h1_num_advocacy <- bf(advocacy ~ advocacy_l1 + (1 | gwcode))
+formula_h1_num_entry <- bf(entry ~ entry_l1 + (1 | gwcode))
+formula_h1_num_funding <- bf(funding ~ funding_l1 + (1 | gwcode))
+
+# Priors
+prior_num <- c(set_prior("normal(0, 10)", class = "Intercept"),
+               set_prior("normal(0, 2.5)", class = "b"),
+               set_prior("normal(0, 2.5)", class = "sd"))
+
+
+# Denominator -------------------------------------------------------------
+# Formulas
+# Treatment ~ lag treatment + lag outcome + varying confounders + non-varying confounders
+formula_h1_denom_total <- 
+  bf(barriers_total ~ barriers_total_l1 + total_oda_log_l1 +
+       v2x_polyarchy + gdpcap_log +
+       v2x_corr + v2x_civlib + 
+       internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp + 
+       (1 | gwcode))
+
+formula_h1_denom_advocacy <- 
+  bf(advocacy ~ advocacy_l1 + total_oda_log_l1 +
+       v2x_polyarchy + gdpcap_log +
+       v2x_corr + v2x_civlib + 
+       internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp + 
+       (1 | gwcode))
+
+formula_h1_denom_entry <- 
+  bf(entry ~ entry_l1 + total_oda_log_l1 +
+       v2x_polyarchy + gdpcap_log +
+       v2x_corr + v2x_civlib + 
+       internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp + 
+       (1 | gwcode))
+
+formula_h1_denom_funding <- 
+  bf(funding ~ funding_l1 + total_oda_log_l1 +
+       v2x_polyarchy + gdpcap_log +
+       v2x_corr + v2x_civlib + 
+       internal_conflict_past_5 + natural_dis_count + un_trade_pct_gdp + 
+       (1 | gwcode))
+
+# Priors
+# get_prior(formula_denom, data = filter(df_country_aid_lags, laws))
+prior_denom <- c(set_prior("normal(0, 10)", class = "Intercept"),
+                 set_prior("normal(0, 2.5)", class = "b"),
+                 set_prior("normal(0, 2.5)", class = "sd"))
+
+
+# Run weighting models ----------------------------------------------------
+# All models get run inside a tibble using map() magic
+all_models_h1 <- tribble(
+  ~model_name, ~formula_num, ~formula_denom,
+  "h1_total", formula_h1_num_total, formula_h1_denom_total,
+  "h1_advocacy", formula_h1_num_advocacy, formula_h1_denom_advocacy,
+  "h1_entry", formula_h1_num_entry, formula_h1_denom_entry,
+  "h1_funding", formula_h1_num_funding, formula_h1_denom_funding
+)
+
+# Fit models
+tic()
+fit_h1_all_models <- all_models_h1 %>%
+  mutate(fit_num = map2(formula_num, model_name, ~brm(
+    .x,
+    data = df_country_aid_laws,
+    prior = prior_num,
+    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
+    control = list(adapt_delta = 0.99),
+    cores = 2, threads = threading(2),
+    file = here("analysis", "model_cache", paste0(.y, "_num.rds"))
+  ))) %>%
+  mutate(fit_denom = map2(formula_denom, model_name, ~brm(
+    .x,
+    data = df_country_aid_laws,
+    prior = prior_denom,
+    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
+    cores = 2, threads = threading(2),
+    control = list(adapt_delta = 0.9),
+    file = here("analysis", "model_cache", paste0(.y, "_denom.rds"))
+  ))) 
+fit_h1_all_models
+toc()
+```
+
+
+```{r h1-build-weights, cache=TRUE}
+calc_prob_dist <- function(form, pred, resid, data = df_country_aid_laws) {
+  dnorm(data[[lhs(form$formula)]],
+        pred[,1],
+        sd(resid[,1], na.rm = TRUE))
+}
+
+# This is the tidybayes way to calculate predictions and residuals but holy crap
+# it's sloooow and memory intensive, so we use predict.brmsfit() instead
+#
+# predicted_num <- df_country_aid_laws %>%
+#   add_predicted_draws(fit_num) %>%
+#   mutate(.residual = barriers_total - .prediction)
+# 
+# predicted_num_per_row <- predicted_num %>%
+#   group_by(.row) %>%
+#   mean_hdi(.prediction, .residual)
+
+tic()
+fit_h1_preds <- fit_h1_all_models %>%
+  mutate(pred_num = map(fit_num, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
+         resid_num = map(fit_num, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
+         pred_denom = map(fit_denom, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
+         resid_denom = map(fit_denom, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)))
+toc()
+
+fit_h1_ipw <- fit_h1_preds %>%
+  mutate(num_actual = pmap(list(form = formula_num, pred = pred_num, resid = resid_num), 
+                           calc_prob_dist),
+         denom_actual = pmap(list(form = formula_denom, pred = pred_denom, resid = resid_denom), 
+                          calc_prob_dist)) %>% 
+  mutate(df_with_weights = map2(num_actual, denom_actual, ~{
+    df_country_aid_laws %>% 
+      mutate(weights_sans_time = .x / .y) %>% 
+      group_by(gwcode) %>% 
+      mutate(ipw = cumprod_na(weights_sans_time)) %>% 
+      ungroup()
+  }))
+fit_h1_ipw
+```
+
+```{r h1-outcome-models}
+# Formulas
+formula_h1_outcome_total <- bf(total_oda_log | weights(ipw) ~ barriers_total + barriers_total_l1 + (1 | gwcode))
+formula_h1_outcome_advocacy <- bf(total_oda_log | weights(ipw) ~advocacy + advocacy_l1 + (1 | gwcode))
+formula_h1_outcome_entry <- bf(total_oda_log | weights(ipw) ~ entry + entry_l1 + (1 | gwcode))
+formula_h1_outcome_funding <- bf(total_oda_log | weights(ipw) ~ funding + funding_l1 + (1 | gwcode))
+
+# Priors
+prior_outcome <- c(set_prior("normal(0, 10)", class = "Intercept"),
+                   set_prior("normal(0, 2.5)", class = "b"),
+                   set_prior("normal(0, 2.5)", class = "sd"))
+
+# Run outcome models
+fit_h1 <- fit_h1_ipw %>% 
+  mutate(formula_outcome = 
+           list(formula_h1_outcome_total, formula_h1_outcome_advocacy, 
+                formula_h1_outcome_entry, formula_h1_outcome_funding)) %>% 
+  mutate(fit_outcome = pmap(list(formula_outcome, df_with_weights, model_name),
+                            ~brm(
+                              ..1,
+                              data = ..2,
+                              prior = prior_outcome,
+                              iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
+                              cores = 2, threads = threading(2),
+                              # control = list(adapt_delta = 0.9),
+                              file = here("analysis", "model_cache", paste0(..3, "_outcome.rds"))
+                            )))
+```
+
+
+```{r h1-plots}
+# Plots!
+plot_total <- fit_h1 %>% 
+  filter(model_name == "h1_total") %>% 
+  pull(fit_outcome) %>% nth(1) %>% 
+  gather_draws(b_barriers_total, b_barriers_total_l1) %>% 
+  mutate(.variable = dplyr::recode(.variable, 
+                                   b_barriers_total = "Additional law, t",
+                                   b_barriers_total_l1 = "Additional law, t - 1")) %>% 
+  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
+  geom_vline(xintercept = 0) +
+  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
+  guides(fill = FALSE) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#FF851B", "#FFDC00")) +
+  coord_cartesian(xlim = c(-5, 2)) +
+  # labs(y = NULL, x = "% change in outcome") +
+  labs(y = NULL, x = NULL) +
+  theme_minimal(base_family = "Work Sans Medium")
+
+plot_advocacy <- fit_h1 %>% 
+  filter(model_name == "h1_advocacy") %>% 
+  pull(fit_outcome) %>% nth(1) %>% 
+  gather_draws(b_advocacy, b_advocacy_l1) %>% 
+  mutate(.variable = dplyr::recode(.variable, 
+                                   b_advocacy = "Additional advocacy law, t",
+                                   b_advocacy_l1 = "Additional advocacy law, t - 1")) %>% 
+  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
+  geom_vline(xintercept = 0) +
+  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
+  guides(fill = FALSE) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#85144b", "#F012BE")) +
+  coord_cartesian(xlim = c(-5, 2)) +
+  # labs(y = NULL, x = "% change in outcome") +
+  labs(y = NULL, x = NULL) +
+  theme_minimal(base_family = "Work Sans Medium")
+
+plot_entry <- fit_h1 %>% 
+  filter(model_name == "h1_entry") %>% 
+  pull(fit_outcome) %>% nth(1) %>% 
+  gather_draws(b_entry, b_entry_l1) %>% 
+  mutate(.variable = dplyr::recode(.variable, 
+                                   b_entry = "Additional entry law, t",
+                                   b_entry_l1 = "Additional entry law, t - 1")) %>% 
+  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
+  geom_vline(xintercept = 0) +
+  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
+  guides(fill = FALSE) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#3D9970", "#2ECC40")) +
+  coord_cartesian(xlim = c(-5, 2)) +
+  labs(y = NULL, x = "% change in outcome") +
+  theme_minimal(base_family = "Work Sans Medium")
+
+plot_funding <- fit_h1 %>% 
+  filter(model_name == "h1_funding") %>% 
+  pull(fit_outcome) %>% nth(1) %>% 
+  gather_draws(b_funding, b_funding_l1) %>% 
+  mutate(.variable = dplyr::recode(.variable, 
+                                   b_funding = "Additional funding law, t",
+                                   b_funding_l1 = "Additional funding law, t - 1")) %>% 
+  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
+  geom_vline(xintercept = 0) +
+  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
+  guides(fill = FALSE) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#001f3f", "#0074D9")) +
+  coord_cartesian(xlim = c(-5, 2)) +
+  labs(y = NULL, x = "% change in outcome") +
+  theme_minimal(base_family = "Work Sans Medium")
+
+(plot_total + plot_advocacy) / (plot_entry + plot_funding)
+```
