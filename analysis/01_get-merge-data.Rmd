@@ -724,22 +724,34 @@ While the main focus of this paper is donor response to new *legislation*, we al
 
 We also use a bunch of other V-Dem variables as confounders:
 
-- CSO entry and exit: `v2cseeorgs`
-- CSO repression: `v2csreprss`
-- CSO consultation: `v2cscnsult`
-- CSO participatory environment: `v2csprtcpt`
-- CSO women's participation: `v2csgender`
-- CSO anti-system movements: `v2csantimv`
-- Core civil society index (entry/exit, repression, participatory env): `v2xcs_ccsi`
-- Political corruption index: `v2x_corr` (less to more, 0-1) (public sector + executive + legislative + judicial corruption)
-- Rule of law index: `v2x_rule`
-- Civil liberties index: `v2x_civlib`
-- Physical violence index: `v2x_clphy`
-- Political civil liberties index: `v2x_clpol`
-- Private civil liberties index: `v2x_clpriv`
-- Polity scores: `e_polity2` (only for reference with polyarchy; we don't use these)
-- Electoral democracy index: `v2x_polyarchy`
-- Regimes of the world scores: `v2x_regime_amb` (only for determining average autocracy; we don't use these)
+# Economics and development
+       gdpcap_log + un_trade_pct_gdp + v2xeg_eqdr + v2peprisch + e_peinfmor +
+       # Human rights and politics
+       # Conflict and disasters
+       internal_conflict_past_5 + natural_dis_count +
+
+- **Civil society things**
+  - CSO entry and exit: `v2cseeorgs`
+  - CSO repression: `v2csreprss`
+  - CSO consultation: `v2cscnsult`
+  - CSO participatory environment: `v2csprtcpt`
+  - CSO women's participation: `v2csgender`
+  - CSO anti-system movements: `v2csantimv`
+  - Core civil society index (entry/exit, repression, participatory env): `v2xcs_ccsi`
+- **Human rights and politics**
+  - Polity scores: `e_polity2` (only for reference with polyarchy; we don't use these)
+  - Electoral democracy index: `v2x_polyarchy`
+  - Regimes of the world scores: `v2x_regime_amb` (only for determining average autocracy; we don't use these)
+  - Political corruption index: `v2x_corr` (less to more, 0-1) (public sector + executive + legislative + judicial corruption)
+  - Rule of law index: `v2x_rule`
+  - Civil liberties index: `v2x_civlib`
+  - Physical violence index: `v2x_clphy`
+  - Private civil liberties index: `v2x_clpriv`
+  - Political civil liberties index: `v2x_clpol` (but not this because it includes `v2cseeorgs` and `v2csreprss`)
+- **Economics and development**
+  - Educational equality: `v2peedueq`
+  - Health equality: `v2pehealth`
+  - Infant mortality rate: `e_peinfmor`
 
 ```{r clean-vdem}
 # 403: Sao Tome and Principe
@@ -759,6 +771,7 @@ vdem_clean <- vdem_raw %>%
          v2csgender,  # CSO women's participation
          v2csantimv,  # CSO anti-system movements
          v2xcs_ccsi,  # Core civil society index (entry/exit, repression, participatory env)
+         # Human rights and politics
          # Political corruption index (less to more, 0-1) (public sector +
          # executive + legislative + judicial corruption)
          v2x_corr,
@@ -767,10 +780,15 @@ vdem_clean <- vdem_raw %>%
          # Rights indexes
          v2x_civlib,  # Civil liberties index
          v2x_clphy,  # Physical violence index
-         v2x_clpol,  # Political civil liberties index
          v2x_clpriv,  # Private civil liberties index
+         v2x_clpol,  # Political civil liberties index
          # Democracy
-         e_polity2, v2x_polyarchy, v2x_regime_amb) %>% 
+         e_polity2, v2x_polyarchy, v2x_regime_amb,
+         # Economics and development
+         v2peedueq,  # Educational equality
+         v2pehealth,  # Health equality
+         e_peinfmor  # Infant mortality rate
+  ) %>% 
   filter(cowcode != 265) %>%  # Omit East Germany
   # Convert West Germany (260) to Germany (255)
   mutate(gwcode = countrycode(cowcode, origin = "cown", destination = "gwn",
@@ -1147,6 +1165,24 @@ Here's how we address that:
 
 - We remove everything from Yugoslavia/Serbia and Montenegro (345) prior to 2006
 
+- Infant mortality `e_peinfmor` is missing from Kosovo (2008–2014), and the World Bank doesn't have data for it, but Eurostat does in [their `demo_minfind` indicator](https://ec.europa.eu/eurostat/databrowser/view/DEMO_MINFIND__custom_660664/default/table?lang=en). Their data, however, is missing a couple years
+
+```{r show-kosovo-infant-mort, indent="    "}
+kosovo_infant_mort <- tibble(year = 2007:2019,
+                             e_peinfmor = c(11.1, 9.7, 9.9, 8.8, 13.1, 11.4, 
+                                            NA, NA, 9.7, 8.5, 9.7, 10.6, 8.7))
+kosovo_infant_mort
+```
+
+    To fix this, we use linear interpolation to fill in 2013 and 2014:
+
+```{r fix-kosovo-infant-mort, indent="    "}
+kosovo_infant_mort <- zoo::na.approx(kosovo_infant_mort) %>% 
+  as_tibble() %>% rename(e_peinfmor_interp = e_peinfmor) %>% 
+  mutate(gwcode = 347)
+kosovo_infant_mort
+```
+
 - `v2x_corr` is only missing data from Bahrain, which oddly has no data from 1980–2004. Because corruption levels do not really change after 2005, we impute the average corruption for the country in all previous years.
 
 - `v2x_polyarchy` is only missing in Mozambique from 1980–1993. To address this, we calculate the average value of V-Dem's polyarchy index (`v2x_polyarchy`) for each level of Polity (−8, −7, and −6 in the case of Mozambique), and then use that corresponding average polyarchy
@@ -1185,8 +1221,11 @@ country_aid_complete <- country_aid %>%
     TRUE ~ v2x_polyarchy
   )) %>% 
   mutate(imputed_polyarchy = is.na(v2x_polyarchy) & iso3 == "MOZ") %>% 
+  # Add Kosovo infant mortality
+  left_join(kosovo_infant_mort, by = c("gwcode", "year")) %>% 
+  mutate(e_peinfmor = coalesce(e_peinfmor, e_peinfmor_interp)) %>% 
   # Get rid of polity and RoW---we don't actually need them
-  select(-e_polity2, -v2x_regime_amb)
+  select(-e_polity2, -v2x_regime_amb, -e_peinfmor_interp)
 
 country_aid_complete %>% glimpse()
 ```
@@ -1200,7 +1239,9 @@ country_aid_complete %>%
   gg_miss_var(., show_pct = TRUE)
 ```
 
-There are only two countries now that have any missing data: 
+There are only three countries now that have any missing data: 
+
+- **Kosovo is missing pre-existence infant mortality, which is fine becuase it didn't exist yet.**
 
 - **Russia is missing GDP, GDP per capita, and percent of GDP from trade from 1980–1989.** There's no easy way around this. V-Dem has GDP per capita data from the long-running [Maddison Project Database](https://www.rug.nl/ggdc/historicaldevelopment/maddison/releases/maddison-project-database-2018), and it includes 1980s Soviet Russia, but the values aren't really comparable to the stuff we calculated using UN GDP data. At first glance it seems that this is a difference in real years, since the Maddison Project uses 2011 dollars and the UN uses 2015 dollars, and there's not an easy way to shift the Maddison Project's values up to 2015 (i.e. there's no deflator). But even if they were in the same dollar-years, the values from the Maddison Project seem really really low compared to what we made with the UN GDP data, so they don't seem to be comparable.
 
@@ -1212,7 +1253,7 @@ country_aid_complete %>%
   filter(is.na(un_trade_pct_gdp))
 ```
 
-Since those are both pre-1990, our data is perfect post-1990 in cases with Suparna's law coverage:
+Since those issues are all pre-1990, our data is perfect post-1990 in cases with Suparna's law coverage:
 
 ```{r final-data-missing-countries, fig.width=6, fig.height=7}
 country_aid_complete %>% 
