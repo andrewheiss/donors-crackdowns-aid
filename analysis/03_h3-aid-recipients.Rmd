@@ -1,0 +1,20 @@
+---
+title: "H~3~: Effect of anti-NGO crackdown on aid recipients"
+author: "Suparna Chaudhry and Andrew Heiss"
+date: "`r format(Sys.time(), '%F')`"
+output: 
+  html_document:
+    code_folding: show
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.retina = 3,
+                      tidy.opts = list(width.cutoff = 120),  # For code
+                      options(width = 90),  # For output
+                      fig.asp = 0.618, fig.width = 7, 
+                      fig.align = "center", out.width = "85%")
+
+options(dplyr.summarise.inform = FALSE)
+```

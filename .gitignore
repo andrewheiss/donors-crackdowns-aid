@@ -15,6 +15,7 @@ data/derived_data/
 # knitr and caching stuff
 **/*_files/*
 **/*_cache/*
+**/model_cache*
 
 # Output
 # (ignore for now)

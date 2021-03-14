@@ -13,22 +13,29 @@ exclude:
 - Makefile
 - LICENSE.html
 - README.html
+- model_cache
 navbar:
   title: NGO Crackdowns and Foreign Aid
   type: inverse
   right:
+  - text: Causal model + theory
+    icon: fas fa-exchange-alt
+    href: 00_causal-model-theory.html
   - text: Process and merge data
     icon: fas fa-table
     href: 01_get-merge-data.html
-  - text: Non-model analysis
+  - text: General analysis
     icon: fas fa-chart-bar
-    href: 02_non-model-analysis.html
-  - text: General models
-    icon: fas fa-chart-bar
-    href: 03_general-models.html
-  - text: Marginal structural models
-    icon: fas fa-chart-bar
-    href: 04_msms.html
+    href: 02_general-analysis.html
+  - text: Models
+    icon: fas fa-chart-line
+    menu:
+      - text: "H1: Effect of anti-NGO crackdown on total ODA"
+        href: 03_h1-total-aid.html
+      - text: "H2: Effect of anti-NGO crackdown on aid contentiousness"
+        href: 03_h2-aid-contentiousness.html
+      - text: "H3: Effect of anti-NGO crackdown on aid recipients"
+        href: 03_h3-aid-recipients.html
 output:
   html_document:
     theme: journal
