@@ -551,29 +551,41 @@ These indexes are also standardized by dividing by the maximum, yielding the fol
 
 The most recent version of Suparna's data is already in nice clean panel form, so it's super easy to get cleaned up.
 
-```{r clean-chaudhry-ngos}
+```{r clean-chaudhry-ngos, message=FALSE}
+dcjw_questions <- read_csv(here("data", "manual_data", "dcjw_questions.csv")) %>% 
+  select(question, barrier, question_clean, ignore_in_index)
+
 regulation_categories <- tribble(
-  ~question, ~category,
-  "q2a", "omit",
-  "q2b", "entry",
-  "q2c", "entry",
-  "q2d", "entry",
-  "q3a", "omit",
-  "q3b", "funding",
-  "q3c", "funding", 
-  "q3d", "funding",
-  "q3e", "funding",
-  "q3f", "funding",
-  "q4a", "advocacy",
-  "q4c", "advocacy"
+  ~question, ~col_name, ~category,
+  "q2a", "ngo_register", "omit",
+  "q2b", "ngo_register_burden", "entry",
+  "q2c", "ngo_register_appeal", "entry",
+  "q2d", "ngo_barrier_foreign_funds", "entry",
+  "q3a", "ngo_disclose_funds", "omit",
+  "q3b", "ngo_foreign_fund_approval", "funding",
+  "q3c", "ngo_foreign_fund_channel", "funding", 
+  "q3d", "ngo_foreign_fund_restrict", "funding",
+  "q3e", "ngo_foreign_fund_prohibit", "funding",
+  "q3f", "", "funding",
+  "q4a", "", "advocacy",
+  "q4c", "", "advocacy"
 )
 
 chaudhry_2014 <- expand_grid(gwcode = unique(chaudhry_raw$gwcode), 
                              year = 2014)
 
-chaudhry_summed <- chaudhry_raw %>% 
+chaudhry_individual_laws <- chaudhry_raw %>% 
+  bind_rows(chaudhry_2014) %>% 
+  arrange(gwcode, year)
+
+chaudhry_long <- chaudhry_raw %>% 
   # Bring in 2014 rows
   bind_rows(chaudhry_2014) %>% 
+  # Ethiopia and Czech Republic have duplicate rows in 1993 and 1994 respectively, but 
+  # the values are identical, so just keep the first of the two
+  group_by(gwcode, year) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
   arrange(gwcode, year) %>% 
   # Reverse values for q2c
   mutate(q2c = 1 - q2c) %>% 
@@ -583,8 +595,7 @@ chaudhry_summed <- chaudhry_raw %>%
   # concerned with an index of restriction, we make the negative values zero
   mutate_at(vars(q2d, q4c), ~ifelse(. == -1, 0, .)) %>% 
   pivot_longer(cols = starts_with("q"), names_to = "question") %>% 
-  left_join(regulation_categories, by = "question") %>% 
-  filter(category != "omit") %>% 
+  left_join(dcjw_questions, by = "question") %>% 
   group_by(gwcode) %>%
   mutate(all_missing = all(is.na(value))) %>%
   group_by(gwcode, question) %>% 
@@ -593,16 +604,25 @@ chaudhry_summed <- chaudhry_raw %>%
   # For older NA legislation that can't be brought forward, set sensible
   # defaults. Leave countries that are 100% 0 as NA.
   mutate(value = ifelse(!all_missing & is.na(value), 0, value)) %>% 
-  group_by(gwcode, year, category) %>% 
+  ungroup()
+
+chaudhry_registration <- chaudhry_long %>% 
+  select(gwcode, year, question_clean, value) %>% 
+  pivot_wider(names_from = "question_clean", values_from = "value")
+
+chaudhry_summed <- chaudhry_long %>%
+  filter(!ignore_in_index) %>% 
+  group_by(gwcode, year, barrier) %>% 
   summarize(total = sum(value)) %>% 
   ungroup()
 
 chaudhry_clean <- chaudhry_summed %>% 
-  pivot_wider(names_from = category, values_from = total) %>% 
+  pivot_wider(names_from = barrier, values_from = total) %>% 
   mutate_at(vars(entry, funding, advocacy), 
             list(std = ~. / max(., na.rm = TRUE))) %>% 
   mutate(barriers_total = advocacy + entry + funding,
-         barriers_total_std = advocacy_std + entry_std + funding_std)
+         barriers_total_std = advocacy_std + entry_std + funding_std) %>% 
+  left_join(chaudhry_registration, by = c("gwcode", "year"))
 
 glimpse(chaudhry_clean)
 ```
@@ -653,8 +673,8 @@ dcjw_clean <- dcjw_tidy %>%
   right_join(potential_dcjw_panel,
              by = c("gwcode", "question", "year")) %>% 
   arrange(gwcode, year) %>% 
-  left_join(regulation_categories, by = "question") %>% 
-  filter(category != "omit", !is.na(category)) %>% 
+  left_join(dcjw_questions, by = "question") %>% 
+  filter(!ignore_in_index) %>% 
   group_by(gwcode) %>%
   mutate(all_missing = all(is.na(value))) %>%
   group_by(gwcode, question) %>% 
@@ -663,10 +683,10 @@ dcjw_clean <- dcjw_tidy %>%
   # For older NA legislation that can't be brought forward, set sensible
   # defaults. Leave countries that are 100% 0 as NA.
   mutate(value = ifelse(!all_missing & is.na(value), 0, value)) %>% 
-  group_by(gwcode, year, category) %>%
+  group_by(gwcode, year, barrier) %>%
   summarize(total = sum(value)) %>%
   ungroup() %>%
-  pivot_wider(names_from = "category", values_from = "total") %>%
+  pivot_wider(names_from = "barrier", values_from = "total") %>%
   filter(year > 1978) %>% 
   # Standardize barrier indexes by dividing by maximum number possible
   mutate(across(c(entry, funding, advocacy), list(std = ~ . / max(., na.rm = TRUE)))) %>% 
