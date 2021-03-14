@@ -1,0 +1,16 @@
+question,question_cat,barrier,barrier_display,question_clean,question_display,ignore_in_index
+q1a,1,association,Association,const_assoc,Constitutional associational rights,TRUE
+q1b,1,association,Association,political_parties,Citizens form political parties,TRUE
+q2a,2,entry,Entry,ngo_register,NGO registration required,TRUE
+q2b,2,entry,Entry,ngo_register_burden,NGO registration burdensome,FALSE
+q2c,2,entry,Entry,ngo_register_appeal,NGO registrationXXXappeal not allowed,FALSE
+q2d,2,entry,Entry,ngo_barrier_foreign_funds,Registration barriers differentXXXif foreign funds involved,FALSE
+q3a,3,funding,Funding,ngo_disclose_funds,Funds must be disclosed,TRUE
+q3b,3,funding,Funding,ngo_foreign_fund_approval,Prior approval requiredXXXfor foreign funds,FALSE
+q3c,3,funding,Funding,ngo_foreign_fund_channel,Foreign funds channeledXXXthrough government,FALSE
+q3d,3,funding,Funding,ngo_foreign_fund_restrict,Foreign funds restricted,FALSE
+q3e,3,funding,Funding,ngo_foreign_fund_prohibit,Foreign funds prohibited,FALSE
+q3f,3,funding,Funding,ngo_type_foreign_fund_prohibit,Foreign funds prohibitedXXXfor some types of NGOs,FALSE
+q4a,4,advocacy,Advocacy,ngo_politics,NGOs restricted from politics,FALSE
+q4b,4,advocacy,Advocacy,ngo_politics_intimidation,NGOs intimidated from politics,TRUE
+q4c,4,advocacy,Advocacy,ngo_politics_foreign_fund,Political barriers differentXXXif foreign funds involved,FALSE

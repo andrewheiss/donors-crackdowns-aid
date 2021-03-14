@@ -6,7 +6,6 @@
 # Data stuff
 # (ignore for now)
 data/raw_data/
-data/manual_data/
 data/derived_data/
 
 # Site output
