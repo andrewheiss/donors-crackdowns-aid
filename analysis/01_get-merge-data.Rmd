@@ -1269,6 +1269,14 @@ country_aid_final <- country_aid_complete %>%
                                 labels = c("New better law", "No new laws",
                                            "New worse law"),
                                 ordered_result = TRUE)))) %>%
+  # Lag and lead stuff
+  mutate(across(c(barriers_total, advocacy, entry, funding, v2xcs_ccsi,
+                  total_oda, total_oda_log, prop_contentious,
+                  prop_ngo_dom, prop_ngo_foreign),
+                list(lag1 = ~lag(., n = 1)))) %>% 
+  mutate(across(c(total_oda, total_oda_log, prop_contentious,
+                  prop_ngo_dom, prop_ngo_foreign),
+                list(lead1 = ~lead(., n = 1)))) %>% 
   ungroup()
 ```
 
