@@ -18,10 +18,10 @@ navbar:
   title: NGO Crackdowns and Foreign Aid
   type: inverse
   right:
-  - text: Causal model + theory
+  - text: Causal model
     icon: fas fa-exchange-alt
     href: 00_causal-model-theory.html
-  - text: Process and merge data
+  - text: Data
     icon: fas fa-table
     href: 01_get-merge-data.html
   - text: General analysis
@@ -36,20 +36,35 @@ navbar:
         href: 03_h2-aid-contentiousness.html
       - text: "H3: Effect of anti-NGO crackdown on aid recipients"
         href: 03_h3-aid-recipients.html
+  - icon: far fa-file-alt
+    menu:
+      - text: "PDF"
+        href: "output/manuscript.pdf"
+      - text: "Manuscripty PDF"
+        href: "output/manuscript-ms.pdf"
+      - text: "HTML"
+        href: "output/manuscript.html"
+      - text: "Word"
+        href: "output/manuscript.docx"
+      - text: "Citations"
+        href: "output/extracted-citations.bib"
+  - icon: fab fa-github
+    href: https://github.com/andrewheiss/donors-crackdowns-aid
 output:
-  html_document:
+  bookdown::html_document2:
     theme: journal
     css: html/fixes.css
     include:
       after_body: html/footer.html
     highlight: kate
-    code_folding: show
+    code_folding: hide
     code_download: yes
     toc: yes
     toc_float:
       collapsed: no
       smooth_scroll: yes
     toc_depth: 4
+    number_sections: no
     fig_height: 4
     fig_width: 7
     lib_dir: site_libs

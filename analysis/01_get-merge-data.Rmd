@@ -2,9 +2,9 @@
 title: "Process and merge data"
 author: "Suparna Chaudhry and Andrew Heiss"
 date: "Last run: `r format(Sys.time(), '%F')`"
-output: 
-  html_document:
-    code_folding: hide
+bibliography: "`r here::here('manuscript', 'bibliography.bib')`"
+csl: "`r here::here('manuscript', 'pandoc', 'csl', 'chicago-author-date.csl')`"
+link-citations: true
 editor_options: 
   chunk_output_type: console
 ---
@@ -30,7 +30,7 @@ library(naniar)
 # Generated via random.org
 set.seed(376)
 
-# Load data and models
+# Load data 
 withr::with_dir(here::here(), {
   source(tar_read(plot_funs))
   source(tar_read(misc_funs))
@@ -67,7 +67,7 @@ We omit a bunch of things though:
 - We omit microstates
 - Because the World Bank doesn't include it in the WDI, we omit Taiwan (713). We also omit East Germany (265) and South Yemen (680)
 - We only use the `r chaudhry_raw %>% distinct(gwcode) %>% nrow()` countries in Suparna's anti-NGO law data
-- Following FinkelPerez-LinanSeligson:2007 (p. 414), we exclude long-term consolidated democracies from our analysis. These are classified by the World Bank as high income; they score below 3 on Freedom House's Scale, receive no aid from USAID, and are not newly independent states:
+- Following @FinkelPerez-LinanSeligson:2007 (p. 414), we exclude long-term consolidated democracies from our analysis. These are classified by the World Bank as high income; they score below 3 on Freedom House's Scale, receive no aid from USAID, and are not newly independent states:
 
 ```{r show-democracies, indent="    "}
 democracies %>% 
@@ -484,3 +484,7 @@ All the data processing is handled with dataset-specific functions that live in 
 
 ```{r, code=xfun::read_utf8(here::here("R", "funs_data-cleaning.R")), eval=FALSE, class.source="fold-show"}
 ```
+
+
+# References
+

@@ -6,6 +6,8 @@ library(httr)
 library(xml2)
 library(readxl)
 library(WDI)
+library(sf)
+library(jsonlite)
 
 
 # Lookup tables -----------------------------------------------------------
@@ -30,22 +32,22 @@ create_consolidated_democracies <- function() {
 
 create_regulation_lookup <- function() {
   regulations <- tribble(
-    ~question, ~barrier,       ~question_clean,                  ~ignore_in_index,
-    "q1a",     "association",  "const_assoc",                    TRUE,
-    "q1b",     "association",  "political_parties",              TRUE,
-    "q2a",     "entry",        "ngo_register",                   TRUE,
-    "q2b",     "entry",        "ngo_register_burden",            FALSE,
-    "q2c",     "entry",        "ngo_register_appeal",            FALSE,
-    "q2d",     "entry",        "ngo_barrier_foreign_funds",      FALSE,
-    "q3a",     "funding",      "ngo_disclose_funds",             TRUE,
-    "q3b",     "funding",      "ngo_foreign_fund_approval",      FALSE,
-    "q3c",     "funding",      "ngo_foreign_fund_channel",       FALSE,
-    "q3d",     "funding",      "ngo_foreign_fund_restrict",      FALSE,
-    "q3e",     "funding",      "ngo_foreign_fund_prohibit",      FALSE,
-    "q3f",     "funding",      "ngo_type_foreign_fund_prohibit", FALSE,
-    "q4a",     "advocacy",     "ngo_politics",                   FALSE,
-    "q4b",     "advocacy",     "ngo_politics_intimidation",      TRUE,
-    "q4c",     "advocacy",     "ngo_politics_foreign_fund",      FALSE
+    ~question, ~barrier,       ~question_clean,                  ~ignore_in_index, ~question_display,
+    "q1a",     "association",  "const_assoc",                    TRUE,             "Constitutional associational rights",
+    "q1b",     "association",  "political_parties",              TRUE,             "Citizens form political parties",
+    "q2a",     "entry",        "ngo_register",                   TRUE,             "NGO registration required",
+    "q2b",     "entry",        "ngo_register_burden",            FALSE,            "NGO registration burdensome",
+    "q2c",     "entry",        "ngo_register_appeal",            FALSE,            "NGO registration appealXXXnot allowed",
+    "q2d",     "entry",        "ngo_barrier_foreign_funds",      FALSE,            "Registration barriers differentXXXif foreign funds involved",
+    "q3a",     "funding",      "ngo_disclose_funds",             TRUE,             "Funds must be disclosed",
+    "q3b",     "funding",      "ngo_foreign_fund_approval",      FALSE,            "Prior approval requiredXXXfor foreign funds",
+    "q3c",     "funding",      "ngo_foreign_fund_channel",       FALSE,            "Foreign funds channeledXXXthrough government",
+    "q3d",     "funding",      "ngo_foreign_fund_restrict",      FALSE,            "Foreign funds restricted",
+    "q3e",     "funding",      "ngo_foreign_fund_prohibit",      FALSE,            "Foreign funds prohibited",
+    "q3f",     "funding",      "ngo_type_foreign_fund_prohibit", FALSE,            "Foreign funds prohibitedXXXfor some types of NGOs",
+    "q4a",     "advocacy",     "ngo_politics",                   FALSE,            "NGOs restricted from politics",
+    "q4b",     "advocacy",     "ngo_politics_intimidation",      TRUE,             "NGOs intimidated from politics",
+    "q4c",     "advocacy",     "ngo_politics_foreign_fund",      FALSE,            "Political barriers differentXXXif foreign funds involved"
   )
   
   return(regulations)
@@ -1032,3 +1034,69 @@ lag_data <- function(df) {
 trim_data <- function(df) {
   df %>% filter(year >= 1990 & year < 2014)
 }
+
+
+# World map ---------------------------------------------------------------
+
+load_world_map <- function(path) {
+  world_map <- read_sf(path) %>%
+    filter(ISO_A3 != "ATA")
+  
+  return(world_map)
+}
+
+
+# Civicus Monitor ---------------------------------------------------------
+
+# We downloaded the standalone embeddable widget
+# (https://monitor.civicus.org/widgets/world/) as an HTML file with
+# `wget https://monitor.civicus.org/widgets/world/` and saved it as index_2021-03-19.html
+#
+# We then extracted the COUNTRIES_DATA variable embedded in a <script> tag
+# (xpath = /html/body/script[5]), which is JSON-ish, but not quite. jsonlite
+# can't parse it for whatever reason, but some online JSON formatter and
+# validator could, so we ran it through that and saved the resulting clean file
+load_clean_civicus <- function(path) {
+  civicus_raw <- read_json(path) %>% as_tibble() %>% slice(1)
+  
+  civicus_lookup <- tribble(
+    ~value, ~category,
+    1, "Closed",
+    2, "Repressed",
+    3, "Obstructed",
+    4, "Narrowed",
+    5, "Open"
+  ) %>%
+    mutate(category = fct_inorder(category, ordered = TRUE))
+  
+  civicus_clean <- civicus_raw %>%
+    pivot_longer(everything(), names_to = "name", values_to = "value") %>%
+    mutate(value = map_chr(value, ~.)) %>%
+    mutate(value = parse_number(value, na = c("", "NA", "None"))) %>%
+    mutate(country_name = countrycode(name, "iso3c", "country.name",
+                                      custom_match = c("KOSOVO" = "XKK",
+                                                       "SVT" = "VCT")),
+           iso3c = countrycode(country_name, "country.name", "iso3c",
+                               custom_match = c("XKK" = "Kosovo",
+                                                "VCT" = "Saint Vincent and the Grenadines"))) %>%
+    left_join(civicus_lookup, by = "value") %>%
+    select(-name, -value, -country_name)
+  
+  return(civicus_clean)
+}
+
+create_civicus_map_data <- function(civicus, map) {
+  map_with_civicus <- map %>%
+    # Fix some Natural Earth ISO weirdness
+    mutate(ISO_A3 = ifelse(ISO_A3 == "-99", as.character(ISO_A3_EH), as.character(ISO_A3))) %>%
+    mutate(ISO_A3 = case_when(
+      .$ISO_A3 == "GRL" ~ "DNK",
+      .$NAME == "Norway" ~ "NOR",
+      .$NAME == "Kosovo" ~ "XKK",
+      TRUE ~ ISO_A3
+    )) %>%
+    left_join(civicus, by = c("ISO_A3" = "iso3c"))
+  
+  return(map_with_civicus)
+}
+

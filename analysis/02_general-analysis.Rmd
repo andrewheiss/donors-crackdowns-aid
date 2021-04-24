@@ -2,9 +2,9 @@
 title: "General analysis"
 author: "Suparna Chaudhry and Andrew Heiss"
 date: "`r format(Sys.time(), '%F')`"
-output: 
-  html_document:
-    code_folding: hide
+bibliography: "`r here::here('manuscript', 'bibliography.bib')`"
+csl: "`r here::here('manuscript', 'pandoc', 'csl', 'chicago-author-date.csl')`"
+link-citations: true
 editor_options: 
   chunk_output_type: console
 ---
@@ -20,32 +20,37 @@ options(dplyr.summarise.inform = FALSE,
         knitr.kable.NA = "")
 ```
 
-
 ```{r load-libraries, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(targets)
 library(scales)
 library(patchwork)
-library(pander)
 library(kableExtra)
-library(countrycode)
 library(sf)
 library(here)
 
-source(here("lib", "graphics.R"))
-source(here("lib", "pandoc.R"))
+# Load data 
+withr::with_dir(here::here(), {
+  source(tar_read(plot_funs))
+  source(tar_read(misc_funs))
+  
+  df_donor <- tar_read(donor_level_data)
+  df_donor_us <- tar_read(donor_level_data_usaid)
+  
+  df_country_aid <- tar_read(country_aid_final)
+  df_country_aid_laws <- filter(df_country_aid, laws)
+  
+  df_autocracies <- tar_read(autocracies)
+  
+  vars_to_summarize <- tar_read(var_details) %>% 
+    mutate(summary_order = 1:n())
+  tar_load(c(ngo_index_table, regulations))
+  
+  tar_load(c(civicus_map_data, civicus_clean))
+})
 
 my_seed <- 1234
 set.seed(my_seed)
-```
-
-```{r load-data}
-df_donor <- readRDS(here("data", "derived_data", "df_donor.rds"))
-df_donor_us <- readRDS(here("data", "derived_data", "df_donor_usaid.rds"))
-
-df_country_aid <- readRDS(here("data", "derived_data", "df_country_aid.rds"))
-df_country_aid_laws <- filter(df_country_aid, laws)
-
-df_autocracies <- readRDS(here("data", "derived_data", "df_autocracies.rds"))
 ```
 
 
@@ -67,10 +72,21 @@ Our data includes information about `r num_countries` countries across `r num_ye
 
 And now the values are even different-er, since we're using V-Dem 10.0 and have really clean data now.
 
-```{r summary-vars-model, results="asis", message=FALSE}
-vars_to_summarize <- read_csv(here("data", "manual_data", "coefs.csv")) %>% 
-  mutate(summary_order = 1:n())
+(ref:vdem) @vdem-v10
 
+(ref:chaudhry) @Chaudhry:2016
+
+(ref:un) UN
+
+(ref:ucdp) UCDP/PRIO
+
+(ref:emdat) EM-DAT
+
+(ref:aiddata) OECD and AidData
+
+(ref:usaid) USAID
+
+```{r summary-vars-model, message=FALSE}
 vars_summarized <- df_country_aid_laws %>%
   select(one_of(vars_to_summarize$term)) %>%
   mutate(total_oda = total_oda / 1000000) %>%
@@ -136,7 +152,7 @@ fig_oecd_aid
 
 ## Proportion of contentious vs. noncontentious aid
 
-```{r summarize-contentious-aid, results="asis"}
+```{r summarize-contentious-aid}
 df_donor %>%
   filter(year >= 1990) %>%
   group_by(purpose_contentiousness) %>%
@@ -147,7 +163,7 @@ df_donor %>%
          Percent = percent_format(accuracy = 0.1)(Percent)) %>% 
   rename(`Contentiousness` = purpose_contentiousness) %>% 
   kbl() %>% 
-  kable_styling()
+  kable_styling(full_width = FALSE)
 ```
 
 ```{r plot-contentious-aid}
@@ -206,7 +222,7 @@ fig_us_aid
 
 Total amounts over time:
 
-```{r summarize-aid-channels, results="asis"}
+```{r summarize-aid-channels}
 usaid_total <- df_country_aid_laws %>% 
   summarise(total = sum(oda_us)) %>% pull(total)
 
@@ -228,7 +244,7 @@ df_country_aid_laws %>%
   mutate(total = dollar(total), perc = percent(perc)) %>% 
   select(Channel = channel_clean, Total = total, Percent = perc) %>% 
   kbl() %>% 
-  kable_styling()
+  kable_styling(full_width = FALSE)
 ```
 
 The US clearly favors US-based NGOs or international NGOs over domestic NGOs.
@@ -310,36 +326,35 @@ ggsave(here("analysis", "output", "fig-dvs.png"), fig_dvs,
 
 ## DCJW / Chaudhry indexes
 
-```{r dcjw-index-table, results="asis", message=FALSE}
-dcjw_indexes <- read_csv(here("data", "manual_data", "dcjw_index.csv")) %>%
-  mutate(Laws = str_replace_all(Laws, "\n", "\n\n"))
+```{r dcjw-index-table}
+ngo_index_table <- ngo_index_table %>% 
+  mutate(Index_nice = paste0(Index, " (max: ", Max, ")"))
 
-caption <- "Description of indexes of NGO barriers {#tbl:ngo-barriers-index}"
-dcjw_index_table <- pandoc.table.return(dcjw_indexes, keep.line.breaks = TRUE, 
-                                        style = "grid", justify = "lll", caption = caption)
-
-cat(dcjw_index_table)
-cat(dcjw_index_table, file = here("analysis", "output", "tbl-ngo-barriers-index.md"))
+ngo_index_table %>% 
+  select(`Restriction description` = Description, Coding) %>% 
+  kbl(align = c("l", "l"),
+      caption = "Description of indexes of NGO barriers") %>% 
+  kable_styling() %>% 
+  pack_rows(index = table(fct_inorder(ngo_index_table$Index_nice)),
+            indent = FALSE)
 ```
 
 ## NGO barriers over time
 
-```{r advocacy-laws, message=FALSE, fig.width=6.5, fig.height=6}
-# barriers_total = advocacy + entry + funding
-dcjw_questions <- read_csv(here("data", "manual_data", "dcjw_questions.csv")) %>% 
+```{r advocacy-laws, message=FALSE, fig.width=6.5, fig.height=6, fig.asp=NULL}
+regulations <- regulations %>% 
   filter(!ignore_in_index) %>% 
-  select(barrier_group = barrier_display, barrier = question_clean, 
-         barrier_display = question_display) %>% 
-  mutate(barrier_group = paste0("Barriers to ", str_to_lower(barrier_group)))
+  mutate(barrier_group = paste0("Barriers to ", str_to_lower(barrier))) %>% 
+  select(barrier_group, barrier = question_clean, barrier_display = question_display)
 
 df_barriers <- df_country_aid_laws %>% 
   group_by(gwcode, year) %>% 
-  summarize(across(one_of(dcjw_questions$barrier), ~. > 0)) %>% 
+  summarize(across(one_of(regulations$barrier), ~. > 0)) %>% 
   group_by(year) %>% 
   summarize(across(-gwcode, ~sum(.))) %>% 
   ungroup() %>% 
   pivot_longer(names_to = "barrier", values_to = "value", -year) %>% 
-  left_join(dcjw_questions, by = "barrier") %>% 
+  left_join(regulations, by = "barrier") %>% 
   mutate(barrier_display = str_replace(barrier_display, "XXX", "\n")) %>% 
   arrange(desc(value)) %>% 
   mutate(barrier_display = fct_inorder(barrier_display, ordered = TRUE))
@@ -538,7 +553,7 @@ ivs_clean_names <- tribble(
 
 ## Restrictions and ODA (H~1~)
 
-```{r restrictions-aid-h1, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5}
+```{r restrictions-aid-h1, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5, fig.asp=NULL}
 df_plot_barriers_oda <- df_country_aid_laws %>% 
   select(year, gwcode, country, total_oda_lead1,
          one_of(dvs_clean_names$barrier)) %>% 
@@ -566,7 +581,7 @@ ggplot(df_plot_barriers_oda,
 
 ## Restrictions and contentiousness (H~2~)
 
-```{r restrictions-aid-h2, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5}
+```{r restrictions-aid-h2, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5, fig.asp=NULL}
 df_plot_barriers_contention <- df_country_aid_laws %>% 
   select(year, gwcode, country, prop_contentious_lead1,
          one_of(dvs_clean_names$barrier))  %>% 
@@ -595,7 +610,7 @@ ggplot(df_plot_barriers_contention,
 
 ## Restrictions and NGOs (H~3~)
 
-```{r restrictions-aid-h3, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5}
+```{r restrictions-aid-h3, warning=FALSE, message=FALSE, fig.width=8, fig.height=4.5, fig.asp=NULL}
 df_plot_barriers_ngos <- df_country_aid_laws %>% 
   select(year, gwcode, country, 
          prop_ngo_dom_lead1, prop_ngo_foreign_lead1,
@@ -629,7 +644,7 @@ ggplot(df_plot_barriers_ngos,
 
 ## CCSI and all DVs (all hypotheses)
 
-```{r ccsi-aid-allhs, warning=FALSE, fig.width=8, fig.height=4.5}
+```{r ccsi-aid-allhs, warning=FALSE, fig.width=8, fig.height=4.5, fig.asp=NULL}
 df_plot_ccsi_ngos <- df_country_aid_laws %>% 
   select(year, gwcode, country, 
          one_of(ivs_clean_names$variable), v2xcs_ccsi) %>% 
@@ -655,49 +670,27 @@ ggplot(df_plot_ccsi_ngos,
 
 # CIVICUS restrictions
 
-```{r civicus-data, warning=FALSE, message=FALSE}
-civicus <- read_csv(here("data", "raw_data", "Civicus", "civicus_monitor_2017.csv"),
-                    na = "Null") %>%
-  mutate(Population = as.double(Population),  # Integers can't handle world population
-         Rating = factor(Rating, levels = c("Open", "Narrowed", "Obstructed", 
-                                            "Repressed", "Closed"), 
-                         ordered = TRUE),
-         iso3 = countrycode(Country, "country.name", "iso3c",
-                            custom_match = c("Kosovo" = "XKK",
-                                             "Micronesia" = "FSM")))
-
-# Use the Robinson map projection
-projection <- "ESRI:54030"
-
-world_map <- read_sf(here("data", "raw_data", "ne_110m_admin_0_countries",
-                          "ne_110m_admin_0_countries.shp")) %>% 
-  filter(ISO_A3 != "ATA")
+```{r civicus-numbers}
+civicus_clean %>% 
+  filter(!is.na(category)) %>% 
+  count(Rating = category, name = "Count") %>% 
+  arrange(desc(Rating)) %>% 
+  kbl(align = c("l", "c")) %>% 
+  kable_styling(full_width = FALSE)
 ```
 
-```{r civicus-numbers, results="asis"}
-civicus %>% count(Rating) %>% pandoc.table()
-```
-
-```{r civicus-map, fig.width=5.5, fig.height=3}
-map_with_civicus <- world_map %>% 
-  # Fix some Natural Earth ISO weirdness
-  mutate(ISO_A3 = ifelse(ISO_A3 == "-99", as.character(ISO_A3_EH), as.character(ISO_A3))) %>% 
-  mutate(ISO_A3 = case_when(
-    .$ISO_A3 == "GRL" ~ "DNK",
-    .$NAME == "Norway" ~ "NOR",
-    .$NAME == "Kosovo" ~ "XKK",
-    TRUE ~ ISO_A3
-  )) %>% 
-  left_join(select(civicus, iso3, Rating), by = c("ISO_A3" = "iso3"))
-
+```{r civicus-map, fig.width=5.5, fig.height=3, fig.asp=NULL}
 plot_civicus_map <- ggplot() +
-  geom_sf(data = map_with_civicus, aes(fill = Rating), size = 0.15, color = "black") +
-  coord_sf(crs = st_crs(projection)) +
-  scale_fill_manual(values = c("grey90", "grey70", "grey45",
-                               "grey20", "black"),
-                    na.translate = FALSE, name = "Civic space") +
+  geom_sf(data = civicus_map_data, aes(fill = fct_rev(category)), size = 0.15, color = "black") +
+  coord_sf(crs = st_crs("ESRI:54030"), datum = NA) +  # Robinson
+  # scale_fill_manual(values = c("grey90", "grey70", "grey45",
+  #                              "grey20", "black"),
+  #                   na.translate = FALSE, name = "Civic space") +
+  scale_fill_viridis_d(option = "plasma", end = 0.9, 
+                       na.translate = FALSE, name = "Civic space") +
   theme_donors_map() + 
-  theme(legend.key.size = unit(0.7, "lines"))
+  theme(legend.position = "bottom",
+        legend.key.size = unit(0.7, "lines"))
 
 plot_civicus_map
 ggsave(here("analysis", "output", "fig-civicus-map.pdf"), plot_civicus_map,
@@ -710,27 +703,22 @@ ggsave(here("analysis", "output", "fig-civicus-map.png"), plot_civicus_map,
 # List of countries included in models
 
 ```{r list-countries, results="asis"}
-matrix_from_vector <- function(x, ncol) {
-  n_balanced <- ceiling(length(x) / ncol) * ncol
-  matrix(c(x, rep(NA, n_balanced - length(x))), ncol = ncol)
-}
+ncol_countries <- 4
 
 all_countries <- df_country_aid_laws %>% 
   distinct(country) %>% 
   arrange(country) %>% 
   pull(country) 
 
-caption <- paste0("All countries included in models (N = ", 
-                  length(all_countries),
-                  ") {#tbl:countries}")
+countries_caption <- paste0("All countries included in models (N = ", 
+                            length(all_countries), ")")
 
-ncol_countries <- 4
-
-tbl_countries <- all_countries %>% 
+all_countries %>% 
   matrix_from_vector(ncol = ncol_countries) %>% 
-  pandoc.table.return(justify = paste0(rep("l", ncol_countries), collapse = ""), 
-                      caption = caption, missing = "")
-
-cat(tbl_countries)
-cat(tbl_countries, file = here("analysis", "output", "tbl-countries.md"))
+  kbl(caption = countries_caption) %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped"), 
+                full_width = FALSE)
 ```
+
+
+# References

@@ -14,6 +14,7 @@ set.seed(7305)  # From random.org
 tar_option_set(packages = c("tidyverse", "here", "fs", "scales", "withr"))
 
 source("R/funs_data-cleaning.R")
+source("R/funs_details.R")
 # source("R/funs_notebook.R")
 
 # here::here() returns an absolute path, which then gets stored in tar_meta and
@@ -81,6 +82,13 @@ list(
              here_rel("data", "raw_data", "Disasters",
                       "emdat_public_2021_01_16_query_uid-ufBbE2.xlsx"),
              format = "file"),
+  tar_target(naturalearth_raw_file,
+             here_rel("data", "raw_data", "ne_110m_admin_0_countries",
+                      "ne_110m_admin_0_countries.shp"),
+             format = "file"),
+  tar_target(civicus_raw_file,
+             here_rel("data", "raw_data", "Civicus", "civicus_2021-03-19.json"),
+             format = "file"),
   
   # Process and clean data
   tar_target(chaudhry_raw, load_chaudhry_raw(chaudhry_raw_file)),
@@ -140,5 +148,12 @@ list(
   tar_target(panel_with_extra_years, make_final_data(country_aid_complete)),
   tar_target(panel_lagged_extra_years, lag_data(panel_with_extra_years)),
   tar_target(country_aid_no_lags, trim_data(panel_with_extra_years)),
-  tar_target(country_aid_final, trim_data(panel_lagged_extra_years))
+  tar_target(country_aid_final, trim_data(panel_lagged_extra_years)),
+  
+  tar_target(world_map, load_world_map(naturalearth_raw_file)),
+  tar_target(civicus_clean, load_clean_civicus(civicus_raw_file)),
+  tar_target(civicus_map_data, create_civicus_map_data(civicus_clean, world_map)),
+  
+  tar_target(var_details, create_vars_table()),
+  tar_target(ngo_index_table, create_ngo_index_table())
 )
