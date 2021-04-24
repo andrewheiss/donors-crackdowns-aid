@@ -21,12 +21,15 @@ options(dplyr.summarise.inform = FALSE)
 
 ```{r load-libraries, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(targets)
 library(ggdag)
 library(dagitty)
 library(here)
 
-source(here("lib", "graphics.R"))
-source(here("lib", "misc_funs.R"))
+withr::with_dir(here::here(), {
+  source(tar_read(plot_funs))
+  source(tar_read(misc_funs))
+})
 
 update_geom_defaults(ggdag:::GeomDagText, list(family = "Noto Sans", face = "plain"))
 

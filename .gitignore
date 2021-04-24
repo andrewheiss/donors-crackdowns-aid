@@ -8,6 +8,9 @@
 data/raw_data/
 data/derived_data/
 
+# Targets stuff
+_targets
+
 # Site output
 **/_site/*
 **/site_libs/*
