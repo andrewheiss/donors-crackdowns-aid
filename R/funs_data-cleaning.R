@@ -1035,6 +1035,20 @@ trim_data <- function(df) {
   df %>% filter(year >= 1990 & year < 2014)
 }
 
+winsorize_one <- function(df) {
+  df <- df %>% 
+    # Winsorize prop_contentious for the two cases that are exactly 1
+    mutate(across(starts_with("prop_contentious"), list(orig = ~.))) %>% 
+    mutate(across(c(starts_with("prop_contentious") & !contains("orig")), 
+                  ~ifelse(. == 1, 0.999, .))) %>% 
+    # Winsorize prop_ngo* for the few cases that are exactly 1
+    mutate(across(starts_with("prop_ngo"), list(orig = ~.))) %>% 
+    mutate(across(c(starts_with("prop_ngo") & !contains("orig")), 
+                  ~ifelse(. == 1, 0.999, .)))
+  
+  return(df)
+}
+
 
 # World map ---------------------------------------------------------------
 

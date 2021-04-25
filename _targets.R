@@ -47,6 +47,8 @@ source("R/funs_details.R")
 source("R/funs_models-iptw.R")
 source("R/models_oda.R")
 # source("R/funs_notebook.R")
+source("R/models_purpose.R")
+source("R/models_recipients.R")
 
 # here::here() returns an absolute path, which then gets stored in tar_meta and
 # becomes computer-specific (i.e. /Users/andrew/Research/blah/thing.Rmd).
@@ -196,6 +198,7 @@ list(
   tar_target(panel_lagged_extra_years, lag_data(panel_with_extra_years)),
   tar_target(country_aid_no_lags, trim_data(panel_with_extra_years)),
   tar_target(country_aid_final, trim_data(panel_lagged_extra_years)),
+  tar_target(country_aid_final_winsor, winsorize_one(country_aid_final)),
   
   ### Map and Civicus ----
   tar_target(world_map, load_world_map(naturalearth_raw_file)),
@@ -226,13 +229,95 @@ list(
   tar_target(df_oda_iptw_funding, create_iptws(country_aid_final, m_oda_treatment_funding)),
   tar_target(m_oda_outcome_funding, f_oda_outcome_funding(df_oda_iptw_funding)),
   
-  ### Example models for demonstrating lognormal ----
+  #### Example models for demonstrating lognormal ----
   tar_target(m_example_normal, f_example_normal(df_oda_iptw_total)),
-  tar_target(m_example_hurdle, f_example_hurdle(df_oda_iptw_total))
+  tar_target(m_example_hurdle, f_example_hurdle(df_oda_iptw_total)),
   
   ### Models for H2: aid contentiousness ----
+  tar_target(m_purpose_treatment_total, 
+             f_purpose_treatment_total(country_aid_final_winsor)),
+  tar_target(df_purpose_iptw_total, 
+             create_iptws(country_aid_final_winsor, m_purpose_treatment_total)),
+  tar_target(m_purpose_outcome_total, 
+             f_purpose_outcome_total(df_purpose_iptw_total)),
   
+  tar_target(m_purpose_treatment_advocacy, 
+             f_purpose_treatment_advocacy(country_aid_final_winsor)),
+  tar_target(df_purpose_iptw_advocacy, 
+             create_iptws(country_aid_final_winsor, m_purpose_treatment_advocacy)),
+  tar_target(m_purpose_outcome_advocacy, 
+             f_purpose_outcome_advocacy(df_purpose_iptw_advocacy)),
+  
+  tar_target(m_purpose_treatment_entry, 
+             f_purpose_treatment_entry(country_aid_final_winsor)),
+  tar_target(df_purpose_iptw_entry, 
+             create_iptws(country_aid_final_winsor, m_purpose_treatment_entry)),
+  tar_target(m_purpose_outcome_entry, 
+             f_purpose_outcome_entry(df_purpose_iptw_entry)),
+  
+  tar_target(m_purpose_treatment_funding, 
+             f_purpose_treatment_funding(country_aid_final_winsor)),
+  tar_target(df_purpose_iptw_funding, 
+             create_iptws(country_aid_final_winsor, m_purpose_treatment_funding)),
+  tar_target(m_purpose_outcome_funding, 
+             f_purpose_outcome_funding(df_purpose_iptw_funding)),
   
   ### Models for H3: aid recipients ----
+  tar_target(m_recip_treatment_total_dom, 
+             f_recip_treatment_total_dom(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_total_dom, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_total_dom)),
+  tar_target(m_recip_outcome_total_dom, 
+             f_recip_outcome_total_dom(df_recip_iptw_total_dom)),
+  
+  tar_target(m_recip_treatment_total_foreign, 
+             f_recip_treatment_total_foreign(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_total_foreign, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_total_foreign)),
+  tar_target(m_recip_outcome_total_foreign, 
+             f_recip_outcome_total_foreign(df_recip_iptw_total_foreign)),
+  
+  tar_target(m_recip_treatment_advocacy_dom, 
+             f_recip_treatment_advocacy_dom(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_advocacy_dom, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_advocacy_dom)),
+  tar_target(m_recip_outcome_advocacy_dom, 
+             f_recip_outcome_advocacy_dom(df_recip_iptw_advocacy_dom)),
+  
+  tar_target(m_recip_treatment_advocacy_foreign, 
+             f_recip_treatment_advocacy_foreign(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_advocacy_foreign, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_advocacy_foreign)),
+  tar_target(m_recip_outcome_advocacy_foreign, 
+             f_recip_outcome_advocacy_foreign(df_recip_iptw_advocacy_foreign)),
+  
+  tar_target(m_recip_treatment_entry_dom, 
+             f_recip_treatment_entry_dom(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_entry_dom, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_entry_dom)),
+  tar_target(m_recip_outcome_entry_dom, 
+             f_recip_outcome_entry_dom(df_recip_iptw_entry_dom)),
+  
+  tar_target(m_recip_treatment_entry_foreign, 
+             f_recip_treatment_entry_foreign(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_entry_foreign, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_entry_foreign)),
+  tar_target(m_recip_outcome_entry_foreign, 
+             f_recip_outcome_entry_foreign(df_recip_iptw_entry_foreign)),
+  
+  tar_target(m_recip_treatment_funding_dom, 
+             f_recip_treatment_funding_dom(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_funding_dom, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_funding_dom)),
+  tar_target(m_recip_outcome_funding_dom, 
+             f_recip_outcome_funding_dom(df_recip_iptw_funding_dom)),
+  
+  tar_target(m_recip_treatment_funding_foreign, 
+             f_recip_treatment_funding_foreign(country_aid_final_winsor)),
+  tar_target(df_recip_iptw_funding_foreign, 
+             create_iptws(country_aid_final_winsor, m_recip_treatment_funding_foreign)),
+  tar_target(m_recip_outcome_funding_foreign, 
+             f_recip_outcome_funding_foreign(df_recip_iptw_funding_foreign)),
+  
   
 )

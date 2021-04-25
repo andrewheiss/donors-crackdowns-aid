@@ -2,9 +2,9 @@
 title: "H~2~: Effect of anti-NGO crackdown on aid contentiousness"
 author: "Suparna Chaudhry and Andrew Heiss"
 date: "`r format(Sys.time(), '%F')`"
-output: 
-  html_document:
-    code_folding: show
+bibliography: "`r here::here('manuscript', 'bibliography.bib')`"
+csl: "`r here::here('manuscript', 'pandoc', 'csl', 'chicago-author-date.csl')`"
+link-citations: true
 editor_options: 
   chunk_output_type: console
 ---
@@ -21,6 +21,7 @@ options(dplyr.summarise.inform = FALSE)
 
 ```{r load-libraries, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(targets)
 library(brms)
 library(tidybayes)
 library(bayesplot)
@@ -36,39 +37,27 @@ library(extraDistr)
 library(glue)
 library(here)
 
-source(here("lib", "graphics.R"))
-source(here("lib", "misc_funs.R"))
 color_scheme_set("viridisC")
 
-labs_exp_logged <- function(brks) {TeX(paste0("e^{", as.character(log(brks))), "}")}
-labs_exp <- function(brks) {TeX(paste0("e^{", as.character(brks)), "}")}
+labs_exp_logged <- function(brks) {TeX(paste0("e^{", as.character(log(brks)), "}"))}
+labs_exp <- function(brks) {TeX(paste0("e^{", as.character(brks), "}"))}
 
 my_seed <- 1234
 set.seed(my_seed)
 
-options(mc.cores = parallel::detectCores(),  # Use all possible cores
-        brms.backend = "rstan")
-
-CHAINS <- 4
-ITER <- 2000
-WARMUP <- 1000
-BAYES_SEED <- 1234
-```
-
-```{r load-data-add-lags}
-df_country_aid <- readRDS(here("data", "derived_data", "df_country_aid.rds"))
-
-df_country_aid <- df_country_aid %>% 
-  # Winsorize prop_contentious for the two cases that are exactly 1
-  mutate(prop_contentious_orig = prop_contentious,
-         prop_contentious = ifelse(prop_contentious == 1, 0.999, prop_contentious),
-         prop_contentious_lead1_orig = prop_contentious_lead1,
-         prop_contentious_lead1 = 
-           ifelse(prop_contentious_lead1 == 1, 0.999, prop_contentious_lead1),
-         prop_contentious_lead1 = 
-           ifelse(prop_contentious_lead1 < 0, 0, prop_contentious_lead1))
-
-df_country_aid_laws <- filter(df_country_aid, laws)
+withr::with_dir(here::here(), {
+  source(tar_read(plot_funs))
+  source(tar_read(misc_funs))
+  
+  # Data
+  df_country_aid <- tar_read(country_aid_final)
+  df_country_aid_laws <- filter(df_country_aid, laws)
+  
+  # Models
+  tar_load(c(m_purpose_treatment_total))
+  tar_load(c(m_purpose_outcome_total, m_purpose_outcome_advocacy, 
+             m_purpose_outcome_entry, m_purpose_outcome_funding))
+})
 ```
 
 ## Weight models
@@ -82,7 +71,7 @@ $$
 
 ### Priors for weight models
 
-We use [generic weakly informative priors]() for our model parameters:
+We use [generic weakly informative priors](https://mc-stan.org/users/documentation/case-studies/weakly_informative_shapes.html) for our model parameters:
 
 - Intercept: $\mathcal{N} (0, 10)$
 - Coefficients: $\mathcal{N} (0, 2.5)$
@@ -116,139 +105,20 @@ pri_sigma <- ggplot() +
 (pri_int + pri_coef + pri_sigma)
 ```
 
-### Run weight models
-
-```{r h2-weight-models, results="hide", message=FALSE}
-# Numerator ---------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + non-varying confounders
-formula_h2_num_total <- bf(barriers_total ~ barriers_total_lag1 + (1 | gwcode))
-formula_h2_num_advocacy <- bf(advocacy ~ advocacy_lag1 + (1 | gwcode))
-formula_h2_num_entry <- bf(entry ~ entry_lag1 + (1 | gwcode))
-formula_h2_num_funding <- bf(funding ~ funding_lag1 + (1 | gwcode))
-
-# Priors
-prior_num <- c(set_prior("normal(0, 10)", class = "Intercept"),
-               set_prior("normal(0, 2.5)", class = "b"),
-               set_prior("cauchy(0, 1)", class = "sd"))
-
-
-# Denominator -------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + lag outcome + varying confounders + non-varying confounders
-formula_h2_denom_total <- 
-  bf(barriers_total ~ barriers_total_lag1 + prop_contentious_lag1 +
-       # Human rights and politics
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       # Economics and development
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       # Conflict and disasters
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h2_denom_advocacy <- 
-  bf(advocacy ~ advocacy_lag1 + prop_contentious_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h2_denom_entry <- 
-  bf(entry ~ entry_lag1 + prop_contentious_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h2_denom_funding <- 
-  bf(funding ~ funding_lag1 + prop_contentious_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-# Priors
-prior_denom <- c(set_prior("normal(0, 10)", class = "Intercept"),
-                 set_prior("normal(0, 2.5)", class = "b"),
-                 set_prior("normal(0, 2.5)", class = "sd"))
-
-
-# Run weighting models ----------------------------------------------------
-# All models get run inside a tibble using map() magic
-all_models_h2 <- tribble(
-  ~model_name, ~formula_num, ~formula_denom,
-  "h2_total", formula_h2_num_total, formula_h2_denom_total,
-  "h2_advocacy", formula_h2_num_advocacy, formula_h2_denom_advocacy,
-  "h2_entry", formula_h2_num_entry, formula_h2_denom_entry,
-  "h2_funding", formula_h2_num_funding, formula_h2_denom_funding
-)
-
-# Fit models
-tic()
-fit_h2_all_models <- all_models_h2 %>%
-  mutate(fit_num = map2(formula_num, model_name, ~brm(
-    .x,
-    data = df_country_aid_laws,
-    prior = prior_num,
-    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-    control = list(adapt_delta = 0.99),
-    file = here("analysis", "model_cache", paste0(.y, "_num.rds"))
-  ))) %>%
-  mutate(fit_denom = map2(formula_denom, model_name, ~brm(
-    .x,
-    data = df_country_aid_laws,
-    prior = prior_denom,
-    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-    control = list(adapt_delta = 0.9),
-    file = here("analysis", "model_cache", paste0(.y, "_denom.rds"))
-  ))) 
-fit_h2_all_models
-toc()
-```
-
 ### Check weight models
 
 We check one of the denominator models for convergence and mixing and fit (not the numerator, since those models are the same as the ones in H1).
 
 ```{r h2-check-denominator}
-check_total_denom <- fit_h2_all_models %>% 
-  filter(model_name == "h2_total") %>% pull(fit_denom) %>% first()
-
-pp_check(check_total_denom, type = "dens_overlay", nsamples = 10) +
+pp_check(m_purpose_treatment_total$model_denom, type = "dens_overlay", nsamples = 10) +
   theme_donors()
 
-check_total_denom %>% 
+m_purpose_treatment_total$model_denom %>% 
   posterior_samples(add_chain = TRUE) %>% 
   select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
   mcmc_trace() +
   theme_donors() +
   theme(legend.position = "right")
-```
-
-## Build weights
-
-```{r h2-build-weights, cache=TRUE}
-tic()
-fit_h2_preds <- fit_h2_all_models %>%
-  mutate(pred_num = map(fit_num, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         resid_num = map(fit_num, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         pred_denom = map(fit_denom, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         resid_denom = map(fit_denom, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)))
-toc()
-
-fit_h2_ipw <- fit_h2_preds %>%
-  mutate(num_actual = pmap(list(form = formula_num, pred = pred_num, resid = resid_num), 
-                           calc_prob_dist),
-         denom_actual = pmap(list(form = formula_denom, pred = pred_denom, resid = resid_denom), 
-                          calc_prob_dist)) %>% 
-  mutate(df_with_weights = map2(num_actual, denom_actual, ~{
-    df_country_aid_laws %>% 
-      mutate(weights_sans_time = .x / .y) %>% 
-      group_by(gwcode) %>% 
-      mutate(ipw = cumprod_na(weights_sans_time)) %>% 
-      ungroup()
-  }))
-fit_h2_ipw
 ```
 
 
@@ -258,13 +128,13 @@ fit_h2_ipw
 
 Our dependent variable for this hypothesis is the percentage of ODA (still in constant 2011 dollars) allocated for contentious purposes, again leaded by one year. We classify contentious aid as any project focused on government and civil society (DAC codes 150 and 151) or conflict prevention and resolution, peace and security (DAC code 152).
 
-Working with proportion data, however, poses interesting mathematical and methodological challenges, since the range of possible outcomes is limited to a value between 0 and 1. Treating proportion variables in a mixed model is technically possible, but it yields predicitions that go beyond the allowable range of values (1.13, -0.5, etc.). Treating the proportion as a binomial variable is also possible and is indeed [one of the ways to use the `glm()` function](http://stackoverflow.com/a/9111904/120898) in R. However, this entails considering the proportion as a ratio of success and failures. In this case, treating a dollar of contentious aid as a success feels off, especially since aid amounts aren't independent events—it's not like each dollar of aid goes through a probabalistic process like a coin flip. 
+Working with proportion data, however, poses interesting mathematical and methodological challenges, since the range of possible outcomes is limited to a value between 0 and 1. Treating proportion variables in a mixed model is technically possible, but it yields predictions that go beyond the allowable range of values (1.13, -0.5, etc.). Treating the proportion as a binomial variable is also possible and is indeed [one of the ways to use the `glm()` function](http://stackoverflow.com/a/9111904/120898) in R. However, this entails considering the proportion as a ratio of success and failures. In this case, treating a dollar of contentious aid as a success feels off, especially since aid amounts aren't independent events—it's not like each dollar of aid goes through a probabalistic process like a coin flip. 
 
 [One recommendation by Ben Bolker](https://stat.ethz.ch/pipermail/r-sig-mixed-models/2011q1/015422.html), the maintainer of [`lme4`](https://cran.r-project.org/package=lme4), is to use a logit transformation of the dependent variable in `lmer()` models. This seems to be [standard practice in political science research](https://acrowinghen.com/2014/04/24/interpreting-coefficients-from-a-logit-linear-model-with-a-proportional-dependent-variable/), too. Logit transformations still can't handle values of exactly 0 or 1, though, but it's possible to [winsorize](https://en.wikipedia.org/wiki/Winsorizing) those values by adding or subtracting 0.001 to the extremes.
 
 Another solution is to use [beta regression](https://cran.r-project.org/package=betareg), which [constrains the outcome variable to values between 0 and 1](http://www.theanalysisfactor.com/zero-one-inflated-beta-models-for-proportion-data/), but unfortunately does not allow for values of exactly 0 or 1. Zero-and-one inflated beta regression models, however, make adjustments for this and model the probability of being 0, being 1, and being somewhere in the middle using different processes. Matti Vuorre has [an excellent overview of ZOIB models here](https://vuorre.netlify.app/post/2019/02/18/analyze-analog-scale-ratings-with-zero-one-inflated-beta-models/).
 
-In the original versions of this project, we used logit-linear models of the ratio of contentious aid to non-contentious aid, like this: 
+In the original version of this project, we used logit-linear models of the ratio of contentious aid to non-contentious aid, like this: 
 
 $$ln( \frac{\text{contentious ODA}_{\text{OECD}}}{\text{noncontentious ODA}_{\text{OECD}}} )_{i, t+1} = \text{NGO legislation}_{it} + \text{controls}_{it}$$
 
@@ -390,6 +260,7 @@ u_i &\sim \mathcal{N} (0, \sigma^2_u) & \text{[country-specific intercepts]} \\
 \text{IPW}_{i, t} &= \prod^t_{t = 1} \frac{\phi(T_{it} | T_{i, t-1}, C_i)}{\phi(T_{it} | T_{i, t-1}, D_{i, t-1}, C_i)} & \text{[stabilized weights]}
 \end{aligned}
 $$
+
 For $\phi$, we just use Stan's default `Gamma(0.01, 0.01)`. Here's what all these prior distributions look like:
 
 ```{r h2-show-priors, fig.width=8}
@@ -443,7 +314,7 @@ z_p + sigma_p + phi_p + b0_p + b12_p +
   plot_layout(design = layout)
 ```
 
-As with H~1~, the prior for the zero-inflated part of the model is a little weird. Internally, Stan uses a default of `logistic(0, 1)`. We want to use an informative `beta(1.8, 8,1)` prior that approximates the proportion of zeroes in the data (but with fairly wide dispersion), but we once again need to translate it into the logistic distribution. Since there's no easy way to do this, we used `brms::logit_scaled` to play around with distributional hyperparameters until it looked okay in the logistic distribution.
+As with H~1~, the prior for the zero-inflated part of the model is a little weird. Internally, Stan uses a default of `logistic(0, 1)`. We want to use an informative `beta(1.8, 8.1)` prior that approximates the proportion of zeroes in the data (but with fairly wide dispersion), but we once again need to translate it into the logistic distribution. Since there's no easy way to do this, we used `brms::logit_scaled` to play around with distributional hyperparameters until it looked okay in the logistic distribution.
 
 ```{r zi-prior-weirdness}
 zi_prior_sim <- tibble(beta = rbeta(10000, 1.8, 8.1)) %>% 
@@ -482,66 +353,14 @@ zi_prior_plot4 <- ggplot(zi_prior_sim) +
 (zi_prior_plot1 + zi_prior_plot2) / (zi_prior_plot3 + zi_prior_plot4)
 ```
 
-
-### Run outcome models
-
-Outcome model time!
-
-```{r h2-outcome-models, results="hide", message=FALSE}
-# Outcome -----------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + non-varying confounders
-formula_h2_out_total <- bf(prop_contentious_lead1 | weights(ipw) ~ 
-                             barriers_total + (1 | gwcode),
-                           zi ~ 1)
-formula_h2_out_advocacy <- bf(prop_contentious_lead1 | weights(ipw) ~ 
-                                advocacy + (1 | gwcode),
-                              zi ~ 1)
-formula_h2_out_entry <- bf(prop_contentious_lead1 | weights(ipw) ~ 
-                             entry + (1 | gwcode),
-                           zi ~ 1)
-formula_h2_out_funding <- bf(prop_contentious_lead1 | weights(ipw) ~ 
-                               funding + (1 | gwcode),
-                             zi ~ 1)
-
-# Priors
-prior_out <- c(set_prior("normal(0, 10)", class = "Intercept"),
-               set_prior("normal(0, 3)", class = "b"),
-               set_prior("cauchy(0, 1)", class = "sd"),
-               set_prior("logistic(-1.5, 0.5)", class = "Intercept", dpar = "zi"),
-               set_prior("gamma(0.01, 0.01)", class = "phi"))
-
-# Run outcome models ------------------------------------------------------
-tic()
-fit_h2_outcomes <- fit_h2_ipw %>%
-  mutate(formula_outcome = 
-           list(formula_h2_out_total, formula_h2_out_advocacy, 
-                formula_h2_out_entry, formula_h2_out_funding)) %>% 
-  mutate(fit_outcome = 
-           pmap(list(formula_outcome, df_with_weights, model_name),
-                ~brm(
-                  ..1,
-                  data = ..2,
-                  prior = prior_out,
-                  family = zero_inflated_beta(),
-                  iter = ITER * 2, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-                  file = here("analysis", "model_cache", paste0(..3, "_outcome.rds"))
-                )))
-fit_h2_outcomes
-toc()
-```
-
 ### Check outcome models
 
 ```{r h2-check-outcome}
-check_total_outcome <- fit_h2_outcomes %>% 
-  filter(model_name == "h2_total") %>% pull(fit_outcome) %>% first()
-
-pp_check(check_total_outcome, type = "dens_overlay", nsamples = 10) +
+pp_check(m_purpose_outcome_total, type = "dens_overlay", nsamples = 10) +
   scale_x_continuous(labels = percent_format(accuracy = 1)) +
   theme_donors()
 
-check_total_outcome %>% 
+m_purpose_outcome_total %>% 
   posterior_samples(add_chain = TRUE) %>% 
   select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
   mcmc_trace() +
@@ -552,9 +371,7 @@ check_total_outcome %>%
 
 ```{r h2-plots, fig.width=8, fig.height=5, fig.asp=NULL}
 # Plots!
-plot_total <- fit_h2_outcomes %>% 
-  filter(model_name == "h2_total") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_total <- m_purpose_outcome_total %>% 
   gather_draws(b_barriers_total) %>%
   mutate(.value = exp(.value) - 1) %>% 
   mutate(.variable = dplyr::recode(.variable, 
@@ -568,9 +385,7 @@ plot_total <- fit_h2_outcomes %>%
   labs(y = NULL, x = NULL) +
   theme_donors()
 
-plot_advocacy <- fit_h2_outcomes %>% 
-  filter(model_name == "h2_advocacy") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_advocacy <- m_purpose_outcome_advocacy %>% 
   gather_draws(b_advocacy) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_advocacy = "Additional advocacy law, t - 1")) %>% 
@@ -584,9 +399,7 @@ plot_advocacy <- fit_h2_outcomes %>%
   labs(y = NULL, x = NULL) +
   theme_donors()
 
-plot_entry <- fit_h2_outcomes %>% 
-  filter(model_name == "h2_entry") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_entry <- m_purpose_outcome_entry %>% 
   gather_draws(b_entry) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_entry = "Additional entry law, t - 1")) %>% 
@@ -600,9 +413,7 @@ plot_entry <- fit_h2_outcomes %>%
   labs(y = NULL, x = "% change in proportion of contentious aid") +
   theme_donors()
 
-plot_funding <- fit_h2_outcomes %>% 
-  filter(model_name == "h2_funding") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_funding <- m_purpose_outcome_funding %>% 
   gather_draws(b_funding) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_funding = "Additional funding law, t - 1")) %>% 
@@ -624,23 +435,15 @@ A one-unit change in X results in a relative change of $e^\beta$ in $\frac{\text
 See also <https://stats.stackexchange.com/a/230679/3025> and <https://static1.squarespace.com/static/58a7d1e52994ca398697a621/t/5a2ebc43e4966b0fab6b02de/1513012293857/betareg_politics.pdf>
 
 ```{r h2-conditional-effects}
-fit_h2_outcomes %>% 
-  filter(model_name == "h2_total") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+m_purpose_outcome_total %>% 
   conditional_effects()
 
-fit_h2_outcomes %>% 
-  filter(model_name == "h2_advocacy") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+m_purpose_outcome_advocacy %>% 
   conditional_effects()
 
-fit_h2_outcomes %>% 
-  filter(model_name == "h2_entry") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+m_purpose_outcome_entry %>% 
   conditional_effects()
 
-fit_h2_outcomes %>% 
-  filter(model_name == "h2_funding") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+m_purpose_outcome_funding %>% 
   conditional_effects()
 ```
