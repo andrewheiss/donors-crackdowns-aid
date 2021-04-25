@@ -1,19 +1,7 @@
 name: donors-crackdowns-aid
 exclude:
-- Analysis
-- Data
-- Miscellaneous
-- Output
-- Presentations
-- Readings
-- Sandbox
-- Writing
-- lib
-- Icon?
 - Makefile
-- LICENSE.html
-- README.html
-- model_cache
+- Icon?
 navbar:
   title: NGO Crackdowns and Foreign Aid
   type: inverse

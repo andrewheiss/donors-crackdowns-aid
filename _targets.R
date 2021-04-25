@@ -46,9 +46,9 @@ source("R/funs_data-cleaning.R")
 source("R/funs_details.R")
 source("R/funs_models-iptw.R")
 source("R/models_oda.R")
-# source("R/funs_notebook.R")
 source("R/models_purpose.R")
 source("R/models_recipients.R")
+source("R/funs_notebook.R")
 
 # here::here() returns an absolute path, which then gets stored in tar_meta and
 # becomes computer-specific (i.e. /Users/andrew/Research/blah/thing.Rmd).
@@ -319,5 +319,17 @@ list(
   tar_target(m_recip_outcome_funding_foreign, 
              f_recip_outcome_funding_foreign(df_recip_iptw_funding_foreign)),
   
+  
+  ## Analysis notebook ----
+  tar_notebook_pages()
+  
+  # This is only here to trigger a re-build of the R Markdown website's
+  # supporting files in `_site`, which copies the files in `output` to
+  # `_site/output`. I unfortunately haven't found a way to make it so that the
+  # site building occurs independently of `rmarkdown::render()`, so this is the
+  # workaround: re-knit index.Rmd
+  # tar_target(supporting_files, 
+  #            copy_notebook_supporting_files(here_rel("analysis", "index.Rmd"), 
+  #                                           main_manuscript, html))
   
 )
