@@ -2,9 +2,9 @@
 title: "H~1~: Effect of anti-NGO crackdown on total ODA"
 author: "Suparna Chaudhry and Andrew Heiss"
 date: "`r format(Sys.time(), '%F')`"
-output: 
-  html_document:
-    code_folding: show
+bibliography: "`r here::here('manuscript', 'bibliography.bib')`"
+csl: "`r here::here('manuscript', 'pandoc', 'csl', 'chicago-author-date.csl')`"
+link-citations: true
 editor_options: 
   chunk_output_type: console
 ---
@@ -21,6 +21,7 @@ options(dplyr.summarise.inform = FALSE)
 
 ```{r load-libraries-data, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(targets)
 library(brms)
 library(tidybayes)
 library(bayesplot)
@@ -29,32 +30,32 @@ library(broom)
 library(broom.mixed)
 library(modelsummary)
 library(patchwork)
-library(tictoc)
 library(latex2exp)
 library(scales)
 library(here)
 
-source(here("lib", "graphics.R"))
-source(here("lib", "misc_funs.R"))
 color_scheme_set("viridisC")
 
-labs_exp_logged <- function(brks) {TeX(paste0("e^{", as.character(log(brks))), "}")}
-labs_exp <- function(brks) {TeX(paste0("e^{", as.character(brks)), "}")}
+labs_exp_logged <- function(brks) {TeX(paste0("e^{", as.character(log(brks)), "}"))}
+labs_exp <- function(brks) {TeX(paste0("e^{", as.character(brks), "}"))}
 
 my_seed <- 1234
 set.seed(my_seed)
 
-options(mc.cores = parallel::detectCores(),  # Use all possible cores
-        brms.backend = "rstan")
-
-CHAINS <- 4
-ITER <- 2000
-WARMUP <- 1000
-BAYES_SEED <- 1234
-
-# Load data
-df_country_aid <- readRDS(here("data", "derived_data", "df_country_aid.rds"))
-df_country_aid_laws <- filter(df_country_aid, laws)
+withr::with_dir(here::here(), {
+  source(tar_read(plot_funs))
+  source(tar_read(misc_funs))
+  
+  # Data
+  df_country_aid <- tar_read(country_aid_final)
+  df_country_aid_laws <- filter(df_country_aid, laws)
+  
+  # Models
+  tar_load(c(m_example_normal, m_example_hurdle))
+  tar_load(c(m_oda_treatment_total))
+  tar_load(c(m_oda_outcome_total, m_oda_outcome_advocacy, 
+             m_oda_outcome_entry, m_oda_outcome_funding))
+})
 ```
 
 ## Weight models
@@ -68,7 +69,7 @@ $$
 
 ### Priors for weight models
 
-We use [generic weakly informative priors]() for our model parameters:
+We use [generic weakly informative priors](https://mc-stan.org/users/documentation/case-studies/weakly_informative_shapes.html) for our model parameters:
 
 - Intercept: $\mathcal{N} (0, 10)$
 - Coefficients: $\mathcal{N} (0, 2.5)$
@@ -102,96 +103,6 @@ pri_sigma <- ggplot() +
 (pri_int + pri_coef + pri_sigma)
 ```
 
-### Run weight models
-
-```{r h1-weight-models, results="hide", message=FALSE}
-# Numerator ---------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + non-varying confounders
-formula_h1_num_total <- bf(barriers_total ~ barriers_total_lag1 + (1 | gwcode))
-formula_h1_num_advocacy <- bf(advocacy ~ advocacy_lag1 + (1 | gwcode))
-formula_h1_num_entry <- bf(entry ~ entry_lag1 + (1 | gwcode))
-formula_h1_num_funding <- bf(funding ~ funding_lag1 + (1 | gwcode))
-
-# Priors
-prior_num <- c(set_prior("normal(0, 10)", class = "Intercept"),
-               set_prior("normal(0, 2.5)", class = "b"),
-               set_prior("cauchy(0, 1)", class = "sd"))
-
-
-# Denominator -------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + lag outcome + varying confounders + non-varying confounders
-formula_h1_denom_total <- 
-  bf(barriers_total ~ barriers_total_lag1 + total_oda_log_lag1 +
-       # Human rights and politics
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       # Economics and development
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       # Conflict and disasters
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h1_denom_advocacy <- 
-  bf(advocacy ~ advocacy_lag1 + total_oda_log_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h1_denom_entry <- 
-  bf(entry ~ entry_lag1 + total_oda_log_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-formula_h1_denom_funding <- 
-  bf(funding ~ funding_lag1 + total_oda_log_lag1 +
-       v2x_polyarchy + v2x_corr + v2x_rule + v2x_civlib + v2x_clphy + v2x_clpriv +
-       gdpcap_log + un_trade_pct_gdp + v2peedueq + v2pehealth + e_peinfmor +
-       internal_conflict_past_5 + natural_dis_count +
-       (1 | gwcode))
-
-# Priors
-prior_denom <- c(set_prior("normal(0, 10)", class = "Intercept"),
-                 set_prior("normal(0, 2.5)", class = "b"),
-                 set_prior("normal(0, 2.5)", class = "sd"))
-
-
-# Run weighting models ----------------------------------------------------
-# All models get run inside a tibble using map() magic
-all_models_h1 <- tribble(
-  ~model_name, ~formula_num, ~formula_denom,
-  "h1_total", formula_h1_num_total, formula_h1_denom_total,
-  "h1_advocacy", formula_h1_num_advocacy, formula_h1_denom_advocacy,
-  "h1_entry", formula_h1_num_entry, formula_h1_denom_entry,
-  "h1_funding", formula_h1_num_funding, formula_h1_denom_funding
-)
-
-# Fit models
-tic()
-fit_h1_all_models <- all_models_h1 %>%
-  mutate(fit_num = map2(formula_num, model_name, ~brm(
-    .x,
-    data = df_country_aid_laws,
-    prior = prior_num,
-    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-    control = list(adapt_delta = 0.99),
-    file = here("analysis", "model_cache", paste0(.y, "_num.rds"))
-  ))) %>%
-  mutate(fit_denom = map2(formula_denom, model_name, ~brm(
-    .x,
-    data = df_country_aid_laws,
-    prior = prior_denom,
-    iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-    control = list(adapt_delta = 0.9),
-    file = here("analysis", "model_cache", paste0(.y, "_denom.rds"))
-  ))) 
-fit_h1_all_models
-toc()
-```
-
 ### Check weight models
 
 We check a few of the numerator and denominator models for convergence and mixing and fit.
@@ -199,13 +110,10 @@ We check a few of the numerator and denominator models for convergence and mixin
 #### Numerator
 
 ```{r h1-check-numerator}
-check_total_num <- fit_h1_all_models %>% 
-  filter(model_name == "h1_total") %>% pull(fit_num) %>% first()
-
-pp_check(check_total_num, type = "dens_overlay", nsamples = 10) +
+pp_check(m_oda_treatment_total$model_num, type = "dens_overlay", nsamples = 10) +
   theme_donors()
 
-check_total_num %>% 
+m_oda_treatment_total$model_num %>% 
   posterior_samples(add_chain = TRUE) %>% 
   select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
   mcmc_trace() +
@@ -216,13 +124,10 @@ check_total_num %>%
 #### Denominator
 
 ```{r h1-check-denominator}
-check_total_denom <- fit_h1_all_models %>% 
-  filter(model_name == "h1_total") %>% pull(fit_denom) %>% first()
-
-pp_check(check_total_denom, type = "dens_overlay", nsamples = 10) +
+pp_check(m_oda_treatment_total$model_denom, type = "dens_overlay", nsamples = 10) +
   theme_donors()
 
-check_total_denom %>% 
+m_oda_treatment_total$model_denom %>% 
   posterior_samples(add_chain = TRUE) %>% 
   select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
   mcmc_trace() +
@@ -230,42 +135,6 @@ check_total_denom %>%
   theme(legend.position = "right")
 ```
 
-## Build weights
-
-```{r h1-build-weights, cache=TRUE}
-# This is the tidybayes way to calculate predictions and residuals but holy crap
-# it's sloooow and memory intensive, so we use predict.brmsfit() instead
-#
-# predicted_num <- df_country_aid_laws %>%
-#   add_predicted_draws(fit_num) %>%
-#   mutate(.residual = barriers_total - .prediction)
-# 
-# predicted_num_per_row <- predicted_num %>%
-#   group_by(.row) %>%
-#   mean_hdi(.prediction, .residual)
-
-tic()
-fit_h1_preds <- fit_h1_all_models %>%
-  mutate(pred_num = map(fit_num, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         resid_num = map(fit_num, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         pred_denom = map(fit_denom, ~predict(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)),
-         resid_denom = map(fit_denom, ~residuals(.x, newdata = df_country_aid_laws, allow_new_levels = TRUE)))
-toc()
-
-fit_h1_ipw <- fit_h1_preds %>%
-  mutate(num_actual = pmap(list(form = formula_num, pred = pred_num, resid = resid_num), 
-                           calc_prob_dist),
-         denom_actual = pmap(list(form = formula_denom, pred = pred_denom, resid = resid_denom), 
-                          calc_prob_dist)) %>% 
-  mutate(df_with_weights = map2(num_actual, denom_actual, ~{
-    df_country_aid_laws %>% 
-      mutate(weights_sans_time = .x / .y) %>% 
-      group_by(gwcode) %>% 
-      mutate(ipw = cumprod_na(weights_sans_time)) %>% 
-      ungroup()
-  }))
-fit_h1_ipw
-```
 
 ## Outcome models
 
@@ -296,43 +165,16 @@ So we fit a hurdled lognormal model, which uses a logit model to predict 0/not 0
 
 Fortunately the lognormal family works well here, since foreign aid follows an exponential distribution and we were using log aid originally. Now we don't have to use log aid and can model the hurdle process at the same time without relying on my own rickety `hurdle_gaussian()` function.
 
-For comparison, here's a regular gaussian model using log ODA and sans hurdling.
-
-```{r compare-hurdle-not-hurdle, results="hide", message=FALSE}
-# Extract the data with weights for the barriers_total model
-aid_data_example_wts <- fit_h1_ipw %>% 
-  filter(model_name == "h1_total") %>% 
-  pull(df_with_weights) %>% first()
-
-example_normal_fit <- brm(
-  bf(total_oda_log_lead1 | weights(ipw) ~ barriers_total + (1 | gwcode)),
-  data = aid_data_example_wts,
-  family = gaussian(), 
-  iter = ITER, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-  file = here("analysis", "model_cache", paste0("h1_example_normal.rds"))
-)
-
-example_hu_fit <- brm(
-  bf(total_oda_lead1 | weights(ipw) ~ barriers_total + (1 | gwcode), 
-     hu ~ 1),
-  data = aid_data_example_wts,
-  # Have to use rstan because cmdstanr weirdly uses negative inits
-  family = hurdle_lognormal(), backend = "rstan",
-  iter = ITER * 2, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-  file = here("analysis", "model_cache", paste0("h1_example_hurdle.rds"))
-)
-```
-
-Even though we just used an intercept-only model for the hurdle process, incorporating it into the overall model gives us a *much* better fit. Look at these posterior predictive checks:
+For comparison, here's a regular gaussian model using log ODA and sans hurdling. Even though we just used an intercept-only model for the hurdle process, incorporating it into the overall model gives us a *much* better fit. Look at these posterior predictive checks:
 
 ```{r check-normal-hurdle, warning=FALSE, message=FALSE}
-pp_check(example_normal_fit, type = "dens_overlay", nsamples = 10) + 
+pp_check(m_example_normal, type = "dens_overlay", nsamples = 10) + 
   coord_cartesian(xlim = c(0, 30)) +
   scale_x_continuous(labels = labs_exp) +
   labs(title = "log(y) ~ x, gaussian family, no hurdling") +
   theme_donors()
 
-pp_check(example_hu_fit, type = "dens_overlay", nsamples = 10) + 
+pp_check(m_example_hurdle, type = "dens_overlay", nsamples = 10) + 
   scale_x_continuous(trans = "log1p", breaks = exp(seq(0, 30, 5)),
                      labels = labs_exp_logged) +
   labs(title = "y ~ x, lognormal family, hurdle: hu ~ 1") +
@@ -342,7 +184,7 @@ pp_check(example_hu_fit, type = "dens_overlay", nsamples = 10) +
 Importantly, the coefficients switch directions!
 
 ```{r hurdle-normal-switch}
-example_normal_fit %>% 
+m_example_normal %>% 
   gather_draws(b_barriers_total) %>%
   mutate(.variable = dplyr::recode(.variable, 
                                    b_barriers_total = "Additional law, t")) %>% 
@@ -356,7 +198,7 @@ example_normal_fit %>%
        title = "log(y) ~ x, gaussian family, no hurdling") +
   theme_donors()
 
-example_hu_fit %>% 
+m_example_hurdle %>% 
   gather_draws(b_barriers_total) %>%
   mutate(.value = exp(.value) - 1) %>%
   mutate(.variable = dplyr::recode(.variable, 
@@ -380,25 +222,25 @@ We thus use a lognormal family when modeling the outcome. Because we're limiting
 Because the outcome is pre-logged, we have to interpret these results a little differently from standard OLS, but it's not too bad, considering that a standard approach to exponential data like aid is to model the logged outcome. When the y is logged, coefficients represent percent changes in y. Models using the lognormal family follow the same principle.
 
 ```{r show-lognormal-interpretation, warning=FALSE}
-tidy(example_hu_fit) %>%
+tidy(m_example_hurdle) %>%
   mutate(estimate_exp = exp(estimate)) %>% 
   filter(term == "barriers_total") %>% 
   select(term, estimate, estimate_exp)
 ```
 
 ```{r extract_coef, warning=FALSE, include=FALSE}
-hu_stats <- tidy(example_hu_fit) %>% 
+hu_stats <- tidy(m_example_hurdle) %>% 
   mutate(term = janitor::make_clean_names(term)) %>% 
   split(.$term)
 ```
 
-In the lognormal model, the *exponentiated* coefficients represent percent changes for each unit increase in X. For instance, $e^\beta_1$ here is `r round(exp(hu_stats$barriers_total$estimate), 5)` Like exponentiated logistic regression coefficients, everything here is centered around 1, meaning that there's a `r percent(exp(hu_stats$barriers_total$estimate) - 1, accuracy = 0.01)` increase in aid for every legal barrier added. This can be also be seen as a multiplier effect. If aid is \$50 million, it changes to `r dollar(50000000 * exp(hu_stats$barriers_total$estimate))` (50,000,000 × `r round(exp(hu_stats$barriers_total$estimate), 5)`).
+In the lognormal model, the *exponentiated* coefficients represent percent changes for each unit increase in X. For instance, $e^{\beta_1}$ here is `r round(exp(hu_stats$barriers_total$estimate), 5)` Like exponentiated logistic regression coefficients, everything here is centered around 1, meaning that there's a `r percent(exp(hu_stats$barriers_total$estimate) - 1, accuracy = 0.01)` increase in aid for every legal barrier added. This can be also be seen as a multiplier effect. If aid is \$50 million, it changes to `r dollar(50000000 * exp(hu_stats$barriers_total$estimate))` (50,000,000 × `r round(exp(hu_stats$barriers_total$estimate), 5)`).
 
-When using `brms::fitted()` on the model object, brms shows data on the original scale, but to see the intuition behind the percent change, we can calculate the percent change manually. Magically, they're all around 0.097.
+When using `brms::fitted()` on the model object, brms shows data on the original scale, but to see the intuition behind the percent change, we can calculate the percent change manually. Magically, they're all around 0.09.
 
 ```{r lognormal-interpret-fitted}
 example_hu_fitted_values <- fitted(
-  example_hu_fit, 
+  m_example_hurdle, 
   newdata = data.frame(barriers_total = seq(0, 8, 1)), 
   re_formula = NA,
   robust = TRUE
@@ -510,69 +352,15 @@ hu_prior_plot4 <- ggplot(hu_prior_sim) +
 (hu_prior_plot1 + hu_prior_plot2) / (hu_prior_plot3 + hu_prior_plot4)
 ```
 
-### Run outcome models
-
-Phew. With all that out of the way, we can finally run the outcome models.
-
-```{r h1-outcome-models, results="hide", message=FALSE}
-# Outcome -----------------------------------------------------------------
-# Formulas
-# Treatment ~ lag treatment + non-varying confounders
-formula_h1_out_total <- bf(total_oda_lead1 | weights(ipw) ~ 
-                             barriers_total + (1 | gwcode),
-                           hu ~ 1)
-formula_h1_out_advocacy <- bf(total_oda_lead1 | weights(ipw) ~ 
-                             advocacy + (1 | gwcode),
-                           hu ~ 1)
-formula_h1_out_entry <- bf(total_oda_lead1 | weights(ipw) ~ 
-                             entry + (1 | gwcode),
-                           hu ~ 1)
-formula_h1_out_funding <- bf(total_oda_lead1 | weights(ipw) ~ 
-                             funding + (1 | gwcode),
-                           hu ~ 1)
-
-# Priors
-prior_out <- c(set_prior("normal(0, 20)", class = "Intercept"),
-               set_prior("normal(0, 3)", class = "b"),
-               set_prior("cauchy(0, 1)", class = "sd"),
-               set_prior("logistic(-2, 0.6)", class = "Intercept", dpar = "hu"))
-
-# Run outcome models ------------------------------------------------------
-tic()
-fit_h1_outcomes <- fit_h1_ipw %>%
-  mutate(formula_outcome = 
-           list(formula_h1_out_total, formula_h1_out_advocacy, 
-                formula_h1_out_entry, formula_h1_out_funding)) %>% 
-  mutate(fit_outcome = 
-           pmap(list(formula_outcome, df_with_weights, model_name),
-                ~brm(
-                  ..1,
-                  data = ..2,
-                  prior = prior_out,
-                  family = hurdle_lognormal(),
-                  iter = ITER * 2, chains = CHAINS, warmup = WARMUP, seed = BAYES_SEED,
-                  # Has to be rstan instead of cmdstanr bc it inexplicably
-                  # creates all sorts of nonnegative initialization errors when
-                  # using cmdstanr with lognormal() :(
-                  backend = "rstan",
-                  file = here("analysis", "model_cache", paste0(..3, "_outcome.rds"))
-                )))
-fit_h1_outcomes
-toc()
-```
-
 ### Check outcome models
 
 ```{r h1-check-outcome}
-check_total_outcome <- fit_h1_outcomes %>% 
-  filter(model_name == "h1_total") %>% pull(fit_outcome) %>% first()
-
-pp_check(check_total_outcome, type = "dens_overlay", nsamples = 10) +
+pp_check(m_oda_outcome_total, type = "dens_overlay", nsamples = 10) +
   scale_x_continuous(trans = "log1p", breaks = exp(seq(0, 20, 5)),
                      labels = labs_exp_logged) +
   theme_donors()
 
-check_total_outcome %>% 
+m_oda_outcome_total %>% 
   posterior_samples(add_chain = TRUE) %>% 
   select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
   mcmc_trace() +
@@ -583,9 +371,7 @@ check_total_outcome %>%
 
 ```{r h1-plots, fig.width=8, fig.height=5, fig.asp=NULL}
 # Plots!
-plot_total <- fit_h1_outcomes %>% 
-  filter(model_name == "h1_total") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_total <- m_oda_outcome_total %>% 
   gather_draws(b_barriers_total) %>%
   mutate(.value = exp(.value) - 1) %>% 
   mutate(.variable = dplyr::recode(.variable, 
@@ -599,9 +385,7 @@ plot_total <- fit_h1_outcomes %>%
   labs(y = NULL, x = NULL) +
   theme_donors()
 
-plot_advocacy <- fit_h1_outcomes %>% 
-  filter(model_name == "h1_advocacy") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_advocacy <- m_oda_outcome_advocacy %>% 
   gather_draws(b_advocacy) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_advocacy = "Additional advocacy law, t - 1")) %>% 
@@ -615,9 +399,7 @@ plot_advocacy <- fit_h1_outcomes %>%
   labs(y = NULL, x = NULL) +
   theme_donors()
 
-plot_entry <- fit_h1_outcomes %>% 
-  filter(model_name == "h1_entry") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_entry <- m_oda_outcome_entry %>% 
   gather_draws(b_entry) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_entry = "Additional entry law, t - 1")) %>% 
@@ -631,9 +413,7 @@ plot_entry <- fit_h1_outcomes %>%
   labs(y = NULL, x = "% change in ODA") +
   theme_donors()
 
-plot_funding <- fit_h1_outcomes %>% 
-  filter(model_name == "h1_funding") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
+plot_funding <- m_oda_outcome_funding %>% 
   gather_draws(b_funding) %>% 
   mutate(.variable = dplyr::recode(.variable, 
                                    b_funding = "Additional funding law, t - 1")) %>% 
@@ -651,23 +431,55 @@ plot_funding <- fit_h1_outcomes %>%
 ```
 
 ```{r h1-conditional-effects}
-fit_h1_outcomes %>% 
-  filter(model_name == "h1_total") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
-  conditional_effects()
+conditional_effects(m_oda_outcome_total)[[1]] %>% 
+  ggplot(aes(x = effect1__, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4, 
+              fill = "#FF4136", color = NA) +
+  geom_line(size = 1, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:9) +
+  scale_y_continuous(labels = dollar) +
+  guides(color = FALSE) +
+  labs(x = "Count of total legal barriers",
+       y = "Predicted total ODA in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 
-fit_h1_outcomes %>% 
-  filter(model_name == "h1_advocacy") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
-  conditional_effects()
+conditional_effects(m_oda_outcome_advocacy)[[1]] %>% 
+  ggplot(aes(x = effect1__, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4, 
+              fill = "#FF4136", color = NA) +
+  geom_line(size = 1, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:2) +
+  scale_y_continuous(labels = dollar) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to advocacy",
+       y = "Predicted total ODA in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 
-fit_h1_outcomes %>% 
-  filter(model_name == "h1_entry") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
-  conditional_effects()
+conditional_effects(m_oda_outcome_entry)[[1]] %>% 
+  ggplot(aes(x = effect1__, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4, 
+              fill = "#FF4136", color = NA) +
+  geom_line(size = 1, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:3) +
+  scale_y_continuous(labels = dollar) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to entry",
+       y = "Predicted total ODA in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 
-fit_h1_outcomes %>% 
-  filter(model_name == "h1_funding") %>% 
-  pull(fit_outcome) %>% nth(1) %>% 
-  conditional_effects()
+conditional_effects(m_oda_outcome_funding)[[1]] %>% 
+  ggplot(aes(x = effect1__, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4, 
+              fill = "#FF4136", color = NA) +
+  geom_line(size = 1, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:5) +
+  scale_y_continuous(labels = dollar) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to funding",
+       y = "Predicted total ODA in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 ```

@@ -6,7 +6,7 @@ library(httr)
 library(xml2)
 library(readxl)
 library(WDI)
-library(sf)
+suppressPackageStartupMessages(library(sf))
 library(jsonlite)
 
 

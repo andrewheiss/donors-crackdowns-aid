@@ -6,8 +6,37 @@ library(tibble)
 csl <- "pandoc/csl/apa.csl"
 bibstyle <- "bibstyle-apa"
 
+# Bayes-specific stuff
+suppressPackageStartupMessages(library(brms))
+options(mc.cores = 4,
+        brms.backend = "cmdstanr")
+
 options(tidyverse.quiet = TRUE,
         dplyr.summarise.inform = FALSE)
+
+# By default, R uses polynomial contrasts for ordered factors in linear models
+# options("contrasts")
+# So make ordered factors use treatment contrasts instead
+options(contrasts = rep("contr.treatment", 2))
+# Or do it on a single variable:
+# contrasts(df$x) <- "contr.treatment"
+
+# Things that get set in options() are not passed down to workers in future (see
+# https://github.com/HenrikBengtsson/future/issues/134), which means all these
+# neat options we set here disappear when running tar_make_future() (like
+# ordered treatment contrasts and the number of cores used, etc.). The official
+# recommendation is to add options() calls to the individual workers.
+#
+# We do this by including options() in the functions where we define model
+# priors and other settings (i.e. oda_setup()). But setting options there
+# inside a bunch of files can get tedious, since the number of cores, workers,
+# etc. depends on the computer we run this on (i.e. my 4-core personal laptop
+# vs. my 16-core work laptop).
+
+# Pass these options to workers using options(worker_options)
+worker_options <- options()[c("mc.cores", "brms.backend",
+                              "contrasts", "tidyverse.quiet",
+                              "dplyr.summarise.inform")]
 
 set.seed(7305)  # From random.org
 
@@ -15,6 +44,8 @@ tar_option_set(packages = c("tidyverse", "here", "fs", "scales", "withr"))
 
 source("R/funs_data-cleaning.R")
 source("R/funs_details.R")
+source("R/funs_models-iptw.R")
+source("R/models_oda.R")
 # source("R/funs_notebook.R")
 
 # here::here() returns an absolute path, which then gets stored in tar_meta and
@@ -24,13 +55,22 @@ source("R/funs_details.R")
 # https://github.com/r-lib/here/issues/36#issuecomment-530894167)
 here_rel <- function(...) {fs::path_rel(here::here(...))}
 
-# Pipeline
+lhs <- function(x) {
+  if (attr(terms(as.formula(x)), which = "response")) {
+    all.vars(x)[1]
+  } else {
+    NULL
+  }
+}
+
+# Pipeline ----------------------------------------------------------------
 list(
-  # Define helper functions
+  ## Helper functions ----
   tar_target(plot_funs, here_rel("R", "graphics.R"), format = "file"),
   tar_target(misc_funs, here_rel("R", "misc.R"), format = "file"),
+
   
-  # Define raw data files
+  ## Raw data files ----
   tar_target(chaudhry_raw_file,
              here_rel("data", "raw_data", "Chaudhry restrictions", "SC_Expanded.dta"),
              format = "file"),
@@ -90,12 +130,15 @@ list(
              here_rel("data", "raw_data", "Civicus", "civicus_2021-03-19.json"),
              format = "file"),
   
-  # Process and clean data
+
+  ## Process and clean data ----
+  ### Skeletons and lookups ----
   tar_target(chaudhry_raw, load_chaudhry_raw(chaudhry_raw_file)),
   tar_target(democracies, create_consolidated_democracies()),
   tar_target(skeleton, create_panel_skeleton(democracies, chaudhry_raw)),
   tar_target(regulations, create_regulation_lookup()),
-  
+
+  ### AidData and USAID ----
   tar_target(aiddata_clean, clean_aiddata(aiddata_raw_file)),
   tar_target(aid_donors, build_aid_donors(aiddata_clean)),
   tar_target(aid_recipients, build_aid_recipients(aiddata_clean, skeleton)),
@@ -126,8 +169,11 @@ list(
   tar_target(usaid_by_country_channel, 
              build_usaid_by_country_channel(donor_level_data_usaid)),
   
+  ### NGO restrictions ----
   tar_target(dcjw_clean, load_clean_dcjw(dcjw_raw_file, regulations)),
   tar_target(chaudhry_clean, load_clean_chaudhry(chaudhry_raw, regulations)),
+  
+  ### Other data sources ----
   tar_target(vdem_clean, load_clean_vdem(vdem_raw_file)),
   tar_target(autocracies, build_autocracies(vdem_clean, skeleton)),
   tar_target(wdi_clean, load_clean_wdi(skeleton)),
@@ -138,6 +184,7 @@ list(
   tar_target(disasters_summarized, load_clean_disasters(disasters_raw_file, 
                                                         skeleton)),
   
+  ### Combine and lag data ----
   tar_target(country_aid, 
              build_country_data(skeleton, chaudhry_clean, vdem_clean,
                                 ucdp_prio_clean, disasters_summarized,
@@ -150,10 +197,42 @@ list(
   tar_target(country_aid_no_lags, trim_data(panel_with_extra_years)),
   tar_target(country_aid_final, trim_data(panel_lagged_extra_years)),
   
+  ### Map and Civicus ----
   tar_target(world_map, load_world_map(naturalearth_raw_file)),
   tar_target(civicus_clean, load_clean_civicus(civicus_raw_file)),
   tar_target(civicus_map_data, create_civicus_map_data(civicus_clean, world_map)),
   
+  
+  ## Variable details ----
   tar_target(var_details, create_vars_table()),
-  tar_target(ngo_index_table, create_ngo_index_table())
+  tar_target(ngo_index_table, create_ngo_index_table()),
+  
+  
+  ## Models ----
+  ### Models for H1: total aid ----
+  tar_target(m_oda_treatment_total, f_oda_treatment_total(country_aid_final)),
+  tar_target(df_oda_iptw_total, create_iptws(country_aid_final, m_oda_treatment_total)),
+  tar_target(m_oda_outcome_total, f_oda_outcome_total(df_oda_iptw_total)),
+  
+  tar_target(m_oda_treatment_advocacy, f_oda_treatment_advocacy(country_aid_final)),
+  tar_target(df_oda_iptw_advocacy, create_iptws(country_aid_final, m_oda_treatment_advocacy)),
+  tar_target(m_oda_outcome_advocacy, f_oda_outcome_advocacy(df_oda_iptw_advocacy)),
+  
+  tar_target(m_oda_treatment_entry, f_oda_treatment_entry(country_aid_final)),
+  tar_target(df_oda_iptw_entry, create_iptws(country_aid_final, m_oda_treatment_entry)),
+  tar_target(m_oda_outcome_entry, f_oda_outcome_entry(df_oda_iptw_entry)),
+  
+  tar_target(m_oda_treatment_funding, f_oda_treatment_funding(country_aid_final)),
+  tar_target(df_oda_iptw_funding, create_iptws(country_aid_final, m_oda_treatment_funding)),
+  tar_target(m_oda_outcome_funding, f_oda_outcome_funding(df_oda_iptw_funding)),
+  
+  ### Example models for demonstrating lognormal ----
+  tar_target(m_example_normal, f_example_normal(df_oda_iptw_total)),
+  tar_target(m_example_hurdle, f_example_hurdle(df_oda_iptw_total))
+  
+  ### Models for H2: aid contentiousness ----
+  
+  
+  ### Models for H3: aid recipients ----
+  
 )
