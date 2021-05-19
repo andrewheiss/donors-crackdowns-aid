@@ -1,6 +1,6 @@
 {
   "R": {
-    "Version": "4.0.3",
+    "Version": "4.1.0",
     "Repositories": [
       {
         "Name": "CRAN",
@@ -1560,7 +1560,7 @@
     },
     "rstan": {
       "Package": "rstan",
-      "Version": "2.21.2",
+      "Version": "2.21.1",
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "52772d81aa532a6331fd535701882c12"
@@ -1798,7 +1798,7 @@
     },
     "tictoc": {
       "Package": "tictoc",
-      "Version": "1.0",
+      "Version": "1.0.1",
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "f8cc5adf4671b013434bbe127f35b28c"
