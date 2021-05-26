@@ -120,3 +120,11 @@ theme_donors_map <- function(base_size = 9, base_family = "Noto Sans") {
   
   ret
 }
+
+labs_exp_logged <- function(brks) {
+  latex2exp::TeX(paste0("e^{", as.character(log(brks)), "}"))
+}
+
+labs_exp <- function(brks) {
+  latex2exp::TeX(paste0("e^{", as.character(brks), "}"))
+}
