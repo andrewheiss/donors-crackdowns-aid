@@ -12,10 +12,10 @@ notebook_rmd_collate <- function(dir_notebook = "analysis") {
   index <- file.path(dir_notebook, "index.Rmd")
   posts <- list.files(
     path = dir_notebook,
-    pattern = ".*[^index].Rmd",
+    pattern = ".*.Rmd",
     full.names = TRUE
   )
-  c(index, posts)
+  unique(c(index, posts))
 }
 
 rmd_to_html <- function(x) gsub("[.]Rmd$", ".html", x = x)
