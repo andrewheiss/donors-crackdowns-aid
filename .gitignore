@@ -29,3 +29,4 @@ analysis/output/
 .DS_Store
 .dropbox
 Icon?
+admin/*
