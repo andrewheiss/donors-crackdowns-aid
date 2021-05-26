@@ -229,9 +229,9 @@ list(
   tar_target(df_oda_iptw_funding, create_iptws(country_aid_final, m_oda_treatment_funding)),
   tar_target(m_oda_outcome_funding, f_oda_outcome_funding(df_oda_iptw_funding)),
   
-  #### Example models for demonstrating lognormal ----
-  tar_target(m_example_normal, f_example_normal(df_oda_iptw_total)),
-  tar_target(m_example_hurdle, f_example_hurdle(df_oda_iptw_total)),
+  tar_target(m_oda_treatment_ccsi, f_oda_treatment_ccsi(country_aid_final)),
+  tar_target(df_oda_iptw_ccsi, create_iptws(country_aid_final, m_oda_treatment_ccsi)),
+  tar_target(m_oda_outcome_ccsi, f_oda_outcome_ccsi(df_oda_iptw_ccsi)),
   
   ### Models for H2: aid contentiousness ----
   tar_target(m_purpose_treatment_total, 
@@ -261,6 +261,13 @@ list(
              create_iptws(country_aid_final_winsor, m_purpose_treatment_funding)),
   tar_target(m_purpose_outcome_funding, 
              f_purpose_outcome_funding(df_purpose_iptw_funding)),
+  
+  tar_target(m_purpose_treatment_ccsi, 
+             f_purpose_treatment_ccsi(country_aid_final_winsor)),
+  tar_target(df_purpose_iptw_ccsi, 
+             create_iptws(country_aid_final_winsor, m_purpose_treatment_ccsi)),
+  tar_target(m_purpose_outcome_ccsi, 
+             f_purpose_outcome_ccsi(df_purpose_iptw_ccsi)),
   
   ### Models for H3: aid recipients ----
   tar_target(m_recip_treatment_total_dom, 
@@ -319,6 +326,56 @@ list(
   tar_target(m_recip_outcome_funding_foreign, 
              f_recip_outcome_funding_foreign(df_recip_iptw_funding_foreign)),
   
+  ## Model tables ----
+  # Build tables here because they take forever
+  # Note tibble::lst() instead of base::list(); lst() auto-names the elements by
+  # their object names
+
+  # H1
+  tar_target(models_tbl_h1_treatment_num,
+             build_modelsummary(lst(m_oda_treatment_total$model_num,
+                                    m_oda_treatment_advocacy$model_num,
+                                    m_oda_treatment_entry$model_num,
+                                    m_oda_treatment_funding$model_num,
+                                    m_oda_treatment_ccsi$model_num))),
+  tar_target(models_tbl_h1_treatment_denom,
+             build_modelsummary(lst(m_oda_treatment_total$model_denom,
+                                    m_oda_treatment_advocacy$model_denom,
+                                    m_oda_treatment_entry$model_denom,
+                                    m_oda_treatment_funding$model_denom,
+                                    m_oda_treatment_ccsi$model_denom))),
+  tar_target(models_tbl_h1_outcome_dejure,
+             build_modelsummary(lst(m_oda_outcome_total, m_oda_outcome_advocacy,
+                                    m_oda_outcome_entry, m_oda_outcome_funding))),
+  tar_target(models_tbl_h1_outcome_defacto,
+             build_modelsummary(lst(m_oda_outcome_ccsi$model_100, 
+                                    m_oda_outcome_ccsi$model_500,
+                                    m_oda_outcome_ccsi$model_1000, 
+                                    m_oda_outcome_ccsi$model_5000))),
+  
+  # H2
+  tar_target(models_tbl_h2_treatment_num,
+             build_modelsummary(lst(m_purpose_treatment_total$model_num,
+                                    m_purpose_treatment_advocacy$model_num,
+                                    m_purpose_treatment_entry$model_num,
+                                    m_purpose_treatment_funding$model_num,
+                                    m_purpose_treatment_ccsi$model_num))),
+  tar_target(models_tbl_h2_treatment_denom,
+             build_modelsummary(lst(m_purpose_treatment_total$model_denom,
+                                    m_purpose_treatment_advocacy$model_denom,
+                                    m_purpose_treatment_entry$model_denom,
+                                    m_purpose_treatment_funding$model_denom,
+                                    m_purpose_treatment_ccsi$model_denom))),
+  tar_target(models_tbl_h2_outcome_dejure,
+             build_modelsummary(lst(m_purpose_outcome_total,
+                                    m_purpose_outcome_advocacy,
+                                    m_purpose_outcome_entry,
+                                    m_purpose_outcome_funding))),
+  tar_target(models_tbl_h2_outcome_defacto,
+             build_modelsummary(lst(m_purpose_outcome_ccsi$model_100, 
+                                    m_purpose_outcome_ccsi$model_500,
+                                    m_purpose_outcome_ccsi$model_1000, 
+                                    m_purpose_outcome_ccsi$model_5000))),
   
   ## Analysis notebook ----
   tar_notebook_pages()
