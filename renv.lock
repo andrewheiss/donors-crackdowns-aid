@@ -345,10 +345,10 @@
     },
     "callr": {
       "Package": "callr",
-      "Version": "3.5.1",
+      "Version": "3.7.0",
       "Source": "Repository",
       "Repository": "CRAN",
-      "Hash": "b7d7f1e926dfcd57c74ce93f5c048e80"
+      "Hash": "461aa75a11ce2400245190ef5d3995df"
     },
     "car": {
       "Package": "car",
@@ -424,8 +424,8 @@
       "Package": "cmdstanr",
       "Version": "0.4.0.9000",
       "Source": "GitHub",
-      "Remotes": "stan-dev/posterior",
       "RemoteType": "github",
+      "Remotes": "stan-dev/posterior",
       "RemoteHost": "api.github.com",
       "RemoteRepo": "cmdstanr",
       "RemoteUsername": "stan-dev",
@@ -1131,10 +1131,10 @@
     },
     "modelsummary": {
       "Package": "modelsummary",
-      "Version": "0.6.6",
+      "Version": "0.8.0",
       "Source": "Repository",
       "Repository": "CRAN",
-      "Hash": "92fdf4cd0e2d327c87d61b84a077ebc5"
+      "Hash": "532f4710602d336149faddad77bc43da"
     },
     "multicool": {
       "Package": "multicool",
@@ -1521,8 +1521,8 @@
       "Package": "rmarkdown",
       "Version": "2.7.12",
       "Source": "GitHub",
-      "Remotes": "yihui/tinytex",
       "RemoteType": "github",
+      "Remotes": "yihui/tinytex",
       "RemoteHost": "api.github.com",
       "RemoteRepo": "rmarkdown",
       "RemoteUsername": "rstudio",
@@ -1560,7 +1560,7 @@
     },
     "rstan": {
       "Package": "rstan",
-      "Version": "2.21.1",
+      "Version": "2.21.2",
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "52772d81aa532a6331fd535701882c12"
@@ -1801,7 +1801,7 @@
       "Version": "1.0.1",
       "Source": "Repository",
       "Repository": "CRAN",
-      "Hash": "f8cc5adf4671b013434bbe127f35b28c"
+      "Hash": "5acb66b0266ad1f0ebf7ffe1aa36ff4c"
     },
     "tidybayes": {
       "Package": "tidybayes",
@@ -1840,15 +1840,15 @@
     },
     "tinytex": {
       "Package": "tinytex",
-      "Version": "0.31.6",
+      "Version": "0.31.7",
       "Source": "GitHub",
       "RemoteType": "github",
       "RemoteHost": "api.github.com",
       "RemoteUsername": "yihui",
       "RemoteRepo": "tinytex",
       "RemoteRef": "master",
-      "RemoteSha": "a86ced07bb4764393fc298c57cb9ada28345045f",
-      "Hash": "2d315d9e1c385e90b674f15f04e241d7"
+      "RemoteSha": "7625575d7506312743983f58aa839b32a9b31ebe",
+      "Hash": "c49946330c67510871e55b843c067d7b"
     },
     "tweenr": {
       "Package": "tweenr",
@@ -1929,10 +1929,10 @@
     },
     "xfun": {
       "Package": "xfun",
-      "Version": "0.22",
+      "Version": "0.23",
       "Source": "Repository",
       "Repository": "CRAN",
-      "Hash": "eab2f8ba53809c321813e72ecbbd19ba"
+      "Hash": "791a57f43c887111490851dcd166d344"
     },
     "xml2": {
       "Package": "xml2",
