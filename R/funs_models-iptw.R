@@ -3,6 +3,11 @@ cumprod_na <- function(x) {
   return(cumprod(x))
 }
 
+cumsum_na <- function(x) {
+  x[is.na(x)] <- 0
+  return(cumsum(x))
+}
+
 # Via https://stackoverflow.com/a/55323097/120898
 lhs <- function(x) {
   if (attr(terms(as.formula(x)), which = "response")) {
@@ -10,6 +15,13 @@ lhs <- function(x) {
   } else {
     NULL
   }
+}
+
+# Base R's scale() outputs a matrix, which requires a bunch of shenanigans to
+# wrangle into a column, like mutate(x = as.numeric(scale(x))). So instead we
+# just use our own here
+my_scale <- function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
 }
 
 create_iptws <- function(dat, wt_model) {
