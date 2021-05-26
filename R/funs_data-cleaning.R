@@ -115,7 +115,17 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
                               custom_match = c("345" = "SRB", "347" = "XKK", "678" = "YEM")),
            # Use 999 as the UN country code for Kosovo
            un = countrycode(cowcode, origin = "cown", destination = "un",
-                            custom_match = c("345" = 688, "347" = 999, "678" = 887))) %>% 
+                            custom_match = c("345" = 688, "347" = 999, "678" = 887)),
+           region = countrycode(cowcode, origin = "cown", destination = "region"),
+           un_region = countrycode(cowcode, origin = "cown", destination = "un.region.name",
+                                   custom_match = c("345" = "Europe", 
+                                                    "347" = "Europe", 
+                                                    "678" = "Asia")),
+           un_subregion = countrycode(cowcode, origin = "cown", 
+                                      destination = "un.regionsub.name",
+                                      custom_match = c("345" = "Eastern Europe", 
+                                                       "347" = "Eastern Europe", 
+                                                       "678" = "Western Asia"))) %>% 
     # There are two entries for "Yugoslavia" in 2006 after recoding 340 as 345;
     # get rid of one
     filter(!(gwcode == 340 & cowcode == 345 & year == 2006)) %>% 
@@ -130,7 +140,8 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
     as_tibble()
   
   skeleton_lookup <- panel_skeleton %>% 
-    group_by(gwcode, cowcode, country, iso2, iso3, un) %>% 
+    group_by(gwcode, cowcode, country, iso2, iso3, un, 
+             region, un_region, un_subregion) %>% 
     summarize(years_included = n()) %>% 
     ungroup() %>% 
     arrange(country)
@@ -1019,12 +1030,31 @@ lag_data <- function(df) {
                                              "New worse law"),
                                   ordered_result = TRUE)))) %>%
     # Lag and lead stuff
-    mutate(across(c(barriers_total, advocacy, entry, funding, v2xcs_ccsi,
-                    total_oda, total_oda_log, prop_contentious,
-                    prop_ngo_dom, prop_ngo_foreign),
-                  list(lag1 = ~lag(., n = 1)))) %>% 
-    mutate(across(c(total_oda, total_oda_log, prop_contentious,
-                    prop_ngo_dom, prop_ngo_foreign),
+    # Treatment variables
+    mutate(across(c(barriers_total, advocacy, entry, funding, 
+                    barriers_total_new, advocacy_new, entry_new, funding_new,
+                    v2xcs_ccsi, v2csreprss,
+                    total_oda, total_oda_log, 
+                    prop_contentious, prop_contentious_logit,
+                    prop_ngo_dom, prop_ngo_foreign, 
+                    prop_ngo_dom_logit, prop_ngo_foreign_logit),
+                  list(lag1 = ~lag(., n = 1),
+                       lag2 = ~lag(., n = 2)))) %>% 
+    # Treatment history
+    mutate(across(c(barriers_total_lag1, advocacy_lag1, entry_lag1, funding_lag1, 
+                    barriers_total_new_lag1, advocacy_new_lag1, 
+                    entry_new_lag1, funding_new_lag1,
+                    v2xcs_ccsi_lag1, v2csreprss_lag1,
+                    barriers_total_lag2, advocacy_lag2, entry_lag2, funding_lag2, 
+                    barriers_total_new_lag2, advocacy_new_lag2, 
+                    entry_new_lag2, funding_new_lag2,
+                    v2xcs_ccsi_lag2, v2csreprss_lag2),
+                  list(cumsum = ~cumsum_na(.)))) %>% 
+    # Outcome variables
+    mutate(across(c(total_oda, total_oda_log, 
+                    prop_contentious, prop_contentious_logit,
+                    prop_ngo_dom, prop_ngo_foreign,
+                    prop_ngo_dom_logit, prop_ngo_foreign_logit),
                   list(lead1 = ~lead(., n = 1)))) %>% 
     ungroup()
   
