@@ -274,6 +274,10 @@ f_purpose_outcome_funding <- function(dat) {
 f_purpose_outcome_ccsi <- function(dat) {
   purpose_settings <- purpose_setup()
   
+  # Temporary stuff bc models are blowing up with (1 | gwcode)
+  purpose_settings$prior_out_logit <- c(set_prior("normal(0, 10)", class = "Intercept"),
+                                        set_prior("normal(0, 2.5)", class = "b"))
+  
   dat <- dat %>% filter(laws)
   
   dat_100 <- dat %>% mutate(iptw = ifelse(iptw > 100, 100, iptw))
@@ -282,8 +286,8 @@ f_purpose_outcome_ccsi <- function(dat) {
   dat_5000 <- dat %>% mutate(iptw = ifelse(iptw > 5000, 5000, iptw))
   
   model_100 <- brm(
-    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi + 
-         (1 | gwcode)),
+    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi),# + 
+         # (1 | gwcode)),
     data = dat,
     family = gaussian(),
     control = list(adapt_delta = 0.9,
@@ -294,8 +298,8 @@ f_purpose_outcome_ccsi <- function(dat) {
   )
   
   model_500 <- brm(
-    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi + 
-         (1 | gwcode)),
+    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi),# + 
+         # (1 | gwcode)),
     data = dat,
     family = gaussian(),
     control = list(adapt_delta = 0.9,
@@ -306,8 +310,8 @@ f_purpose_outcome_ccsi <- function(dat) {
   )
   
   model_1000 <- brm(
-    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi + 
-         (1 | gwcode)),
+    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi),# + 
+         # (1 | gwcode)),
     data = dat,
     family = gaussian(),
     control = list(adapt_delta = 0.9,
@@ -318,8 +322,8 @@ f_purpose_outcome_ccsi <- function(dat) {
   )
   
   model_5000 <- brm(
-    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi + 
-         (1 | gwcode)),
+    bf(prop_contentious_logit_lead1 | weights(iptw) ~ v2xcs_ccsi),# + 
+         # (1 | gwcode)),
     data = dat,
     family = gaussian(),
     control = list(adapt_delta = 0.9,

@@ -30,17 +30,12 @@ library(broom)
 library(broom.mixed)
 library(modelsummary)
 library(patchwork)
-library(tictoc)
-library(latex2exp)
 library(scales)
-library(extraDistr)
-library(glue)
+library(latex2exp)
+library(kableExtra)
 library(here)
 
 color_scheme_set("viridisC")
-
-labs_exp_logged <- function(brks) {TeX(paste0("e^{", as.character(log(brks)), "}"))}
-labs_exp <- function(brks) {TeX(paste0("e^{", as.character(brks), "}"))}
 
 my_seed <- 1234
 set.seed(my_seed)
@@ -53,10 +48,24 @@ withr::with_dir(here::here(), {
   df_country_aid <- tar_read(country_aid_final)
   df_country_aid_laws <- filter(df_country_aid, laws)
   
-  # Models
-  tar_load(c(m_purpose_treatment_total))
+  # Treatment models
+  tar_load(c(m_purpose_treatment_total, m_purpose_treatment_advocacy, 
+             m_purpose_treatment_entry, m_purpose_treatment_funding, 
+             m_purpose_treatment_ccsi))
+  
+  # IPTW data
+  tar_load(c(df_purpose_iptw_total, df_purpose_iptw_advocacy, 
+             df_purpose_iptw_entry, df_purpose_iptw_funding,
+             df_purpose_iptw_ccsi))
+  
+  # Outcome models
   tar_load(c(m_purpose_outcome_total, m_purpose_outcome_advocacy, 
-             m_purpose_outcome_entry, m_purpose_outcome_funding))
+             m_purpose_outcome_entry, m_purpose_outcome_funding,
+             m_purpose_outcome_ccsi))
+  
+  # Results tables
+  tar_load(c(models_tbl_h2_treatment_num, models_tbl_h2_treatment_denom))
+  tar_load(c(models_tbl_h2_outcome_dejure, models_tbl_h2_outcome_defacto))
 })
 ```
 
@@ -121,329 +130,408 @@ m_purpose_treatment_total$model_denom %>%
   theme(legend.position = "right")
 ```
 
+### Check weights {.tabset}
+
+IPTWs should generally have a mean of 1 and shouldn't be too incredibly high. 
+
+#### Total ODA
+
+Eh, some of these are high, but the mean and median are fine.
+
+```{r iptws-total-oda}
+summary(df_purpose_iptw_total$iptw)
+
+df_purpose_iptw_total %>% 
+  ggplot(aes(x = iptw)) +
+  geom_histogram(binwidth = 0.5, boundary = 0) +
+  theme_donors()
+```
+
+#### Advocacy
+
+Great.
+
+```{r iptws-advocacy}
+summary(df_purpose_iptw_advocacy$iptw)
+
+df_purpose_iptw_advocacy %>% 
+  ggplot(aes(x = iptw)) +
+  geom_histogram(binwidth = 1, boundary = 0) +
+  theme_donors()
+```
+
+#### Entry
+
+Good.
+
+```{r iptws-entry}
+summary(df_purpose_iptw_entry$iptw)
+
+df_purpose_iptw_entry %>% 
+  ggplot(aes(x = iptw)) +
+  geom_histogram(binwidth = 0.5, boundary = 0) +
+  theme_donors()
+```
+
+#### Funding
+
+Some high values again, but only a handful, and the median and mean are great.
+
+```{r iptws-funding}
+summary(df_purpose_iptw_funding$iptw)
+
+df_purpose_iptw_funding %>% 
+  ggplot(aes(x = iptw)) +
+  geom_histogram(binwidth = 1, boundary = 0) +
+  theme_donors()
+```
+
+#### Core civil society index
+
+hahaha oh no:
+
+```{r iptws-ccsi-summary}
+summary(df_purpose_iptw_ccsi$iptw)
+```
+
+We truncate at four different thresholds: 100, 500, 1,000, and 5,000:
+
+```{r iptws-ccsi}
+plot_iptw_ccsi <- bind_rows(
+  df_purpose_iptw_ccsi %>% mutate(threshold = 100, iptw = ifelse(iptw > 100, 100, iptw)),
+  df_purpose_iptw_ccsi %>% mutate(threshold = 500, iptw = ifelse(iptw > 500, 500, iptw)),
+  df_purpose_iptw_ccsi %>% mutate(threshold = 1000, iptw = ifelse(iptw > 1000, 1000, iptw)),
+  df_purpose_iptw_ccsi %>% mutate(threshold = 5000, iptw = ifelse(iptw > 5000, 5000, iptw))
+) %>% 
+  mutate(threshold = paste0("Truncated at ", comma(threshold)),
+         threshold = fct_inorder(threshold))
+
+plot_iptw_ccsi %>% 
+  ggplot(aes(x = iptw)) +
+  geom_histogram(bins = 50, boundary = 0) +
+  facet_wrap(vars(threshold), scales = "free_x") +
+  theme_donors()
+```
+
+### Results {.tabset}
+
+These are less important since we just use these treatment models to generate weights *and* because interpreting each coefficient when trying to isolate casual effects is unimportant and [a "nuisance"](https://arxiv.org/abs/2005.10314). But here are the results anyway:
+
+#### Numerator models
+
+```{r tbl-h2-num}
+# model_names <- paste0("(", 1:length(models_tbl_h2_treatment_num), ")")
+model_names <- 1:length(models_tbl_h2_treatment_num)
+names(models_tbl_h2_treatment_num) <- model_names
+
+treatment_names <- c("Treatment", "Total barriers (t)", "Barriers to advocacy (t)", 
+                     "Barriers to entry (t)", "Barriers to funding (t)", "CCSI (t)")
+treatment_rows <- as.data.frame(t(treatment_names))
+attr(treatment_rows, "position") <- 1
+
+coef_list_num <- list(
+  "b_barriers_total_lag1" = "Treatment (t − 1)",
+  "b_advocacy_lag1" = "Treatment (t − 1)",
+  "b_entry_lag1" = "Treatment (t − 1)",
+  "b_funding_lag1" = "Treatment (t − 1)",
+  "b_v2xcs_ccsi_lag1" = "Treatment (t − 1)",
+  "b_Intercept" = "Intercept"
+)
+
+modelsummary(models_tbl_h2_treatment_num,
+             statistic = "[{conf.low}, {conf.high}]",
+             coef_map = coef_list_num,
+             add_rows = treatment_rows,
+             gof_omit = "ELPD",
+             escape = FALSE,
+             notes = list("Posterior means; 95% credible intervals in brackets"))
+```
+
+#### Denominator models
+
+```{r tbl-h2-denom}
+# model_names <- paste0("(", 1:length(models_tbl_h2_treatment_denom), ")")
+model_names <- 1:length(models_tbl_h2_treatment_denom)
+names(models_tbl_h2_treatment_denom) <- model_names
+
+treatment_names <- c("Treatment", "Total barriers (t)", "Barriers to advocacy (t)", 
+                     "Barriers to entry (t)", "Barriers to funding (t)", "CCSI (t)")
+treatment_rows <- as.data.frame(t(treatment_names))
+attr(treatment_rows, "position") <- 1
+
+coef_list_denom <- list(
+  "b_barriers_total_lag1" = "Treatment (t − 1)",
+  "b_advocacy_lag1" = "Treatment (t − 1)",
+  "b_entry_lag1" = "Treatment (t − 1)",
+  "b_funding_lag1" = "Treatment (t − 1)",
+  "b_v2xcs_ccsi_lag1" = "Treatment (t − 1)",
+  "b_v2x_polyarchy" = "Polyarchy",
+  "b_v2x_corr" = "Corruption index",
+  "b_v2x_rule" = "Rule of law index",
+  "b_v2x_civlib" = "Civil liberties index",
+  "b_v2x_clphy" = "Physical violence index",
+  "b_v2x_clpriv" = "Private civil liberties index",
+  "b_gdpcap_log" = "Log GDP/capita",
+  "b_un_trade_pct_gdp" = "Percent of GDP from trade",
+  "b_v2peedueq" = "Educational equality index",
+  "b_v2pehealth" = "Health equality index",
+  "b_e_peinfmor" = "Infant mortality rate",
+  "b_internal_conflict_past_5TRUE" = "Internal conflict in past 5 years",
+  "b_natural_dis_count" = "Count of natural disasters",
+  "b_Intercept" = "Intercept"
+)
+
+modelsummary(models_tbl_h2_treatment_denom,
+             statistic = "[{conf.low}, {conf.high}]",
+             coef_map = coef_list_denom,
+             add_rows = treatment_rows,
+             gof_omit = "ELPD",
+             escape = FALSE,
+             notes = list("Posterior means; 95% credible intervals in brackets"))
+```
+
 
 ## Outcome models
 
 ### Modeling choice
 
-Our dependent variable for this hypothesis is the percentage of ODA (still in constant 2011 dollars) allocated for contentious purposes, again leaded by one year. We classify contentious aid as any project focused on government and civil society (DAC codes 150 and 151) or conflict prevention and resolution, peace and security (DAC code 152).
+Our dependent variable for this hypothesis is the percentage of ODA allocated for contentious purposes, again leaded by one year. We classify contentious aid as any project focused on government and civil society (DAC codes 150 and 151) or conflict prevention and resolution, peace and security (DAC code 152).
 
 Working with proportion data, however, poses interesting mathematical and methodological challenges, since the range of possible outcomes is limited to a value between 0 and 1. Treating proportion variables in a mixed model is technically possible, but it yields predictions that go beyond the allowable range of values (1.13, -0.5, etc.). Treating the proportion as a binomial variable is also possible and is indeed [one of the ways to use the `glm()` function](http://stackoverflow.com/a/9111904/120898) in R. However, this entails considering the proportion as a ratio of success and failures. In this case, treating a dollar of contentious aid as a success feels off, especially since aid amounts aren't independent events—it's not like each dollar of aid goes through a probabalistic process like a coin flip. 
 
-[One recommendation by Ben Bolker](https://stat.ethz.ch/pipermail/r-sig-mixed-models/2011q1/015422.html), the maintainer of [`lme4`](https://cran.r-project.org/package=lme4), is to use a logit transformation of the dependent variable in `lmer()` models. This seems to be [standard practice in political science research](https://acrowinghen.com/2014/04/24/interpreting-coefficients-from-a-logit-linear-model-with-a-proportional-dependent-variable/), too. Logit transformations still can't handle values of exactly 0 or 1, though, but it's possible to [winsorize](https://en.wikipedia.org/wiki/Winsorizing) those values by adding or subtracting 0.001 to the extremes.
-
 Another solution is to use [beta regression](https://cran.r-project.org/package=betareg), which [constrains the outcome variable to values between 0 and 1](http://www.theanalysisfactor.com/zero-one-inflated-beta-models-for-proportion-data/), but unfortunately does not allow for values of exactly 0 or 1. Zero-and-one inflated beta regression models, however, make adjustments for this and model the probability of being 0, being 1, and being somewhere in the middle using different processes. Matti Vuorre has [an excellent overview of ZOIB models here](https://vuorre.netlify.app/post/2019/02/18/analyze-analog-scale-ratings-with-zero-one-inflated-beta-models/).
 
-In the original version of this project, we used logit-linear models of the ratio of contentious aid to non-contentious aid, like this: 
+However, as we found with [our hurdling dilemma with H~1~](03_h1-total-aid.html#Modeling_choices), while it's possible to fit a zero-inflated model (or even zero-one-inflated model), it would require separate model specifications for different parts (the zero part, the one part, and the non-zero-one parts), leaving us with three different pseudo-treatment effects, only one of which (the non-zero-one part) weighted with the IPTW, and thus adjusted with do-calculus logic.
 
-$$ln( \frac{\text{contentious ODA}_{\text{OECD}}}{\text{noncontentious ODA}_{\text{OECD}}} )_{i, t+1} = \text{NGO legislation}_{it} + \text{controls}_{it}$$
+[One recommendation by Ben Bolker](https://stat.ethz.ch/pipermail/r-sig-mixed-models/2011q1/015422.html), the maintainer of [`lme4`](https://cran.r-project.org/package=lme4), is to use a logit transformation of the dependent variable in `lmer()` models. This seems to be [standard practice in political science research](https://acrowinghen.com/2014/04/24/interpreting-coefficients-from-a-logit-linear-model-with-a-proportional-dependent-variable/), too. Logit transformations still can't handle values of exactly 0 or 1, though, but it's possible to [winsorize](https://en.wikipedia.org/wiki/Winsorizing) those values by adding or subtracting 0.001 to the extremes. [Stata has a guide](https://www.stata.com/support/faqs/statistics/logit-transformation/) about how to do this too.
 
-That meant we had to compare the ratio of contentious aid to non-contentious aid rather than the direct percent of contentious aid, and it made for some acrobatic interpretations.
+We thus use logit-linear models of the ratio of contentious aid to non-contentious aid, like this: 
 
-Here, we use zero-inflated beta regression instead, since **brms** and Stan have improved and sped up *a ton* over the past few years.
+$$\log \left( \frac{\text{Contentious aid}}{\text{Noncontentious aid}} \right)_{i, t+1}$$
 
-The proportion of contentious aid has a bunch of zeroes, and those zeros are close to the distribution of the regular data, so we use zero-inflated models rather than a hurdle process like with did with H~1~ and total ODA. Something determines whether a country/year receives any contentious aid, and then something else determines what proportion is contentious.
+That means that we're comparing the ratio of contentious aid to non-contentious aid rather than the direct percent of contentious aid, and it makes for some acrobatic interpretations, but at least the results are interpretable.
 
-If we don't take this zero-inflation process into account in the model, our ATE will be wrong. We don't really care about the exact zero-inflation process—we care most about the ATE of laws/restrictions on contentiousness—but we still need to deal with the multiple processes.
+### Interpreting outcome models
 
-```{r show-outcome-dist}
-ggplot(df_country_aid_laws, 
-       aes(x = prop_contentious, fill = prop_contentious == 0)) +
-  geom_histogram(binwidth = 0.05, color = "white", boundary = 0) +
-  labs(x = "Proportion of contentious aid", y = "Count") +
-  scale_fill_manual(values = c("grey80", "#FF851B"), 
-                    labels = c("% > 0", "% = 0"),
-                    name = NULL) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  theme_donors()
+TODO
 
-# Percent where prop_contentious is 0:
-df_country_aid_laws %>% 
-  count(prop_contentious == 0) %>% 
-  mutate(prop = n / sum(n))
-```
-
-We thus fit a zero-inflated beta model, which uses a logit model to predict 0/not 0, then uses a beta family to model the rest of the data. 
-
-Beta regression is based on the beta distribution and its two shape parameters, but the parameterization of the distribution in brms/stan uses $\mu$ and $\phi$, which are transformed versions of shape 1 and shape 2:
-
-- $\text{shape1} = \mu \phi$
-- $\text{shape2} = (1 - \mu)\phi$
-
-This is actually kind of neat, because instead of trying to finagle a beta distribution based on $\frac{\text{shape1}}{\text{shape1} + \text{shape2}}$, you can specify the average proportion and "spread" similar to a normal distribution.
-
-For instance, if we wanted a beta distribution around 0.3, with some moderate spread, we could play around with `shape1` and `shape2` and figure that they're probably something like 3 and 7, based on $\frac{3}{3 + 7}$. We can get these same numbers with the reparameterized version, using 0.3 as $\mu$ (i.e. clustered around 0.3) and 10 as $\phi$. We get the same 3 and 7 values for the two shapes and the distribution looks great! The `dprop()` function in **extraDistr** takes these reparameterized arguments directly, too (it calls $phi$ `size`).
-
-```{r beta-reparameterized-example, fig.width=6.5, fig.height=2.5, fig.asp=NULL}
-mu <- 0.3
-phi <- 10
-
-shape1 <- mu * phi
-shape1
-
-shape2 <- (1 - mu) * phi
-shape2
-
-# With dbeta
-plot_beta <- ggplot() +
-  stat_function(fun = dbeta, args = list(shape1 = shape1, shape2 = shape2),
-                geom = "area", fill = "grey80", color = "black") +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  labs(x = "Proportion", y = NULL, 
-       title = "Beta distribution",
-       subtitle = glue("shape1 = {shape1}; shape2 = {shape2}")) +
-  theme_donors(9) +
-  theme(axis.text.y = element_blank())
-
-# With dprop
-plot_prop <- ggplot() +
-  stat_function(fun = dprop, args = list(size = phi, mean = mu),
-                geom = "area", fill = "grey80", color = "black") +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  labs(x = "Proportion", y = NULL, 
-       title = "Reparameterized beta distribution",
-       subtitle = glue("µ = {mu}; φ = {phi}")) +
-  theme_donors(9) +
-  theme(axis.text.y = element_blank())
-
-plot_beta + plot_prop
-```
-
-The median proportion of contentious aid for non-zero cases is around 5%, and based on the histogram earlier, it's not unheard of to go up to 25% or even as high as 50%:
-
-```{r find-median-contensiousness}
-df_country_aid_laws %>% 
-  filter(prop_contentious > 0) %>% 
-  summarize(median_prop = median(prop_contentious))
-```
-
-In the absence of any covariates, we could use a $mu$ of 0.05 and a $phi$ of 3:
-
-```{r mu-phi-our-data, fig.width=6, fig.height=4, fig.asp=NULL}
-beta_mu <- 0.05
-beta_phi <- 3
-
-# beta_shape1 <- beta_mu * beta_phi
-# beta_shape2 <- (1 - beta_mu) * beta_phi
-
-ggplot() +
-  stat_function(fun = dprop, args = list(size = beta_phi, mean = beta_mu),
-                geom = "area", fill = "grey80", color = "black") +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  labs(x = "Proportion", y = NULL, 
-       title = "Reparameterized beta distribution",
-       subtitle = glue("µ = {beta_mu}; φ = {beta_phi}")) +
-  theme_donors(9) +
-  theme(axis.text.y = element_blank())
-```
-
-This gets more complex, though, once we start adding covariates. $\mu$ is modeled with logistic regression while $\phi$ is modeled with a log link, and each of these models can get their own covariates.
 
 ### Priors for outcome models
 
-There are a *ton* of moving parts in these outcome models. Here's the full specification for the models and all priors:
+Here's the full specification for the models and all priors:
 
 $$
 \begin{aligned}
-\text{y}_{i,t} | u_i, \text{Law}_{i, t} &\sim \operatorname{ZIBeta} (Z_i, \text{y}^\star_i, \phi_i) & \text{[likelihood]} \\
-\operatorname{logit} (Z_i) &\sim \alpha_Z & \text{[intercept-only logit if } \text{y}_{i, t} = 0 \text{]} \\
-\operatorname{logit} (\text{y}^\star_i) &\sim (\beta_0 + \beta_1 \text{Law}_{i, t} + \beta_2 \text{Law}_{i, t-1}, \sigma^2_\epsilon, u_i) \times \text{IPW}_{i, t} & \text{[if } \text{y}_{i, t} > 0 \text{]}\\
-\log (\phi_i) &\sim \alpha_\phi & \text{[intercept-only model for precision]} \\
-u_i &\sim \mathcal{N} (0, \sigma^2_u) & \text{[country-specific intercepts]} \\
+\log \left(\frac{\text{Contentious aid}}{\text{Noncontentious aid}} \right)_{i, t} &\sim \text{IPTW}_{i, t-1} \times \mathcal{N} (\mu_{i, t}, \sigma_m) & \text{[likelihood]}\\
+\mu_{i, t} &\sim \alpha_{\text{country}[i]} + \delta_{\text{year}[k]} + \beta\ \text{Law}_{i, t-1} & \text{[marginal structural model]}\\
+\alpha_j &\sim \mathcal{N} (\bar{\alpha}, \sigma_{\alpha}) \text{, for } j \text{ in } 1 .. J & \text{[country-specific intercepts]} \\
+\delta_j &\sim \mathcal{N} (0, \sigma_{\delta}) \text{, for } j \text{ in } 1 .. J & \text{[year-specific intercepts]} \\
 \ \\
-\alpha_Z &\sim \operatorname{Logistic}(-1.5, 0.5) & \text{[prior proportion of rows where y = 0]} \\
-\alpha_\phi &\sim \operatorname{Gamma} (0.01, 0.01) & \text{[prior Beta precision]} \\
-\beta_0 &\sim \mathcal{N} (0, 10) & \text{[prior population intercept]} \\
-\beta_1, \beta_2 &\sim \mathcal{N} (0, 3) & \text{[prior population effects]} \\
-\sigma^2_e, \sigma^2_u &\sim \operatorname{Cauchy}(0, 1) & \text{[prior sd for population and country]} \\
-\ \\
-\text{IPW}_{i, t} &= \prod^t_{t = 1} \frac{\phi(T_{it} | T_{i, t-1}, C_i)}{\phi(T_{it} | T_{i, t-1}, D_{i, t-1}, C_i)} & \text{[stabilized weights]}
+\bar{\alpha} &\sim \mathcal{N} (0, 20) & \text{[prior population intercept]} \\
+\beta &\sim \mathcal{N} (0, 3) & \text{[prior population effects]} \\
+\sigma_m, \sigma_{\alpha}, \sigma_{\delta} &\sim \operatorname{Cauchy}(0, 1) & \text{[prior sd for errors]}
 \end{aligned}
 $$
 
-For $\phi$, we just use Stan's default `Gamma(0.01, 0.01)`. Here's what all these prior distributions look like:
-
-```{r h2-show-priors, fig.width=8}
-z_p <- ggplot() +
-  stat_function(fun = dlogis, args = list(location = -1.5, scale = 0.5),
-                geom = "area", fill = "grey80", color = "black") +
-  labs(x = TeX("\\textbf{Prop. contentious = 0 (α_Z)}")) +
-  annotate(geom = "label", x = -2, y = 0.07, label = "Logistic(-1.5, 0.5)", size = pts(9)) +
-  xlim(-8, 3) +
-  theme_donors(prior = TRUE)
-
-b0_p <- ggplot() +
-  stat_function(fun = dnorm, args = list(mean = 0, sd = 10),
-                geom = "area", fill = "grey80", color = "black") +
-  labs(x = TeX("\\textbf{Population intercept (β_0)}")) +
-  annotate(geom = "label", x = 0, y = 0.0042, label = "N(0, 10)", size = pts(9)) +
-  xlim(-40, 40) +
-  theme_donors(prior = TRUE)
-
-b12_p <- ggplot() +
-  stat_function(fun = dnorm, args = list(mean = 0, sd = 3),
-                geom = "area", fill = "grey80", color = "black") +
-  labs(x = TeX("\\textbf{Population effects (β_1, β_2)}")) +
-  annotate(geom = "label", x = 0, y = 0.02, label = "N(0, 3)", size = pts(9)) +
-  xlim(-10, 10) +
-  theme_donors(prior = TRUE)
-
-sigma_p <- ggplot() +
-  stat_function(fun = dcauchy, args = list(location = 0, scale = 1),
-                geom = "area", fill = "grey80", color = "black") +
-  labs(x = TeX("\\textbf{Population and country SD (σ_e, σ_u)}")) +
-  annotate(geom = "label", x = 5, y = 0.04, label = "Cauchy(0, 1)", size = pts(9)) +
-  xlim(0, 10) +
-  theme_donors(prior = TRUE)
-
-phi_p <- ggplot() +
-  stat_function(fun = dgamma, args = list(shape = 0.1, scale = 0.1),
-                geom = "area", fill = "grey80", color = "black") +
-  labs(x = TeX("\\textbf{Beta precision (φ)}")) +
-  annotate(geom = "label", x = 0.25, y = 2, label = "Gamma(0.01, 0.01)", size = pts(9)) +
-  xlim(0, 0.5) +
-  theme_donors(prior = TRUE)
-
-layout <- "
-AAAABBBBCCCC
-AAAABBBBCCCC
-##DDDDEEEE##
-##DDDDEEEE##
-"
-z_p + sigma_p + phi_p + b0_p + b12_p +
-  plot_layout(design = layout)
-```
-
-As with H~1~, the prior for the zero-inflated part of the model is a little weird. Internally, Stan uses a default of `logistic(0, 1)`. We want to use an informative `beta(1.8, 8.1)` prior that approximates the proportion of zeroes in the data (but with fairly wide dispersion), but we once again need to translate it into the logistic distribution. Since there's no easy way to do this, we used `brms::logit_scaled` to play around with distributional hyperparameters until it looked okay in the logistic distribution.
-
-```{r zi-prior-weirdness}
-zi_prior_sim <- tibble(beta = rbeta(10000, 1.8, 8.1)) %>% 
-  mutate(beta_logit_scale = brms::logit_scaled(beta)) %>% 
-  mutate(logit_betaish_prior = rlogis(10000, -1.5, 0.5)) %>% 
-  mutate(prior_probs = plogis(logit_betaish_prior))
-
-zi_prior_plot1 <- ggplot(zi_prior_sim) +
-  geom_density(aes(x = beta), fill = "grey80", color = "black") +
-  labs(x = "Proportion where prop. contentious = 0",
-       subtitle = "Original Beta(1.8, 8.1) distribution") +
-  coord_cartesian(xlim = c(0, 1)) +
-  theme_donors(prior = TRUE)
-
-zi_prior_plot2 <- ggplot(zi_prior_sim) +
-  geom_density(aes(x = beta_logit_scale), fill = "grey80", color = "black") +
-  labs(x = "Logistic value where prop. contentious = 0",
-       subtitle = "Beta(1.8, 8.1) scaled with brms::logit_scaled") +
-  coord_cartesian(xlim = c(-8, 1)) +
-  theme_donors(prior = TRUE)
-
-zi_prior_plot3 <- ggplot(zi_prior_sim) +
-  geom_density(aes(x = logit_betaish_prior), fill = "grey80", color = "black") +
-  labs(x = "Logistic value where prop. contentious = 0",
-       subtitle = "Estimated Logistic(-1.5, 0.5)") +
-  coord_cartesian(xlim = c(-8, 1)) +
-  theme_donors(prior = TRUE)
-
-zi_prior_plot4 <- ggplot(zi_prior_sim) +
-  geom_density(aes(x = prior_probs), fill = "grey80", color = "black") +
-  labs(x = "Proportion where prop. contentious = 0",
-       subtitle = "Logistic(-1.5, 0.5) transformed to probabilities") +
-  coord_cartesian(xlim = c(0, 1)) +
-  theme_donors(prior = TRUE)
-
-(zi_prior_plot1 + zi_prior_plot2) / (zi_prior_plot3 + zi_prior_plot4)
-```
-
 ### Check outcome models
 
-```{r h2-check-outcome}
-pp_check(m_purpose_outcome_total, type = "dens_overlay", nsamples = 10) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  theme_donors()
+The traceplots all look fine. Here's one as an example:
 
+```{r h2-check-outcome}
 m_purpose_outcome_total %>% 
   posterior_samples(add_chain = TRUE) %>% 
-  select(-starts_with("r_gwcode"), -starts_with("z_"), -lp__, -iter) %>% 
+  select(-starts_with("r_gwcode"), -starts_with("z_"), -starts_with("r_year"), -lp__, -iter) %>% 
   mcmc_trace() +
   theme_donors()
 ```
 
-### Results
+### Results {.tabset}
 
-```{r h2-plots, fig.width=8, fig.height=5, fig.asp=NULL}
-# Plots!
-plot_total <- m_purpose_outcome_total %>% 
-  gather_draws(b_barriers_total) %>%
-  mutate(.value = exp(.value) - 1) %>% 
-  mutate(.variable = dplyr::recode(.variable, 
-                                   b_barriers_total = "Additional law, t - 1")) %>% 
-  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
-  geom_vline(xintercept = 0) +
-  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
+#### ATE plots
+
+```{r h2-plots-dejure, fig.width=8, fig.height=5, fig.asp=NULL}
+coefs_nice <- tribble(
+  ~`.variable`, ~var_nice,
+  "b_barriers_total", "Additional law, t - 1",
+  "b_advocacy", "Additional advocacy law, t - 1",
+  "b_entry", "Additional entry law, t - 1",
+  "b_funding", "Additional funding law, t - 1",
+  "b_v2xcs_ccsi", "Core civil society index, t - 1"
+) %>% 
+  mutate(var_nice = fct_inorder(var_nice))
+
+plot_total_data <- gather_draws(m_purpose_outcome_total, b_barriers_total)
+plot_advocacy_data <- gather_draws(m_purpose_outcome_advocacy, b_advocacy)
+plot_entry_data <- gather_draws(m_purpose_outcome_entry, b_entry)
+plot_funding_data <- gather_draws(m_purpose_outcome_funding, b_funding) 
+
+plot_purpose_coefs <- bind_rows(plot_total_data, plot_advocacy_data,
+                                plot_entry_data, plot_funding_data) %>% 
+  left_join(coefs_nice, by = ".variable") %>% 
+  mutate(.value = exp(.value))
+
+rope_sd <- exp(sd(df_purpose_iptw_total$prop_contentious_logit_lead1))
+
+plot_rope <- tibble(xmin = 1 + (-0.05 * rope_sd), 
+                    xmax = 1 + (0.05 * rope_sd))
+
+ggplot(plot_purpose_coefs, aes(x = .value, y = fct_rev(var_nice), fill = var_nice)) +
+  geom_vline(xintercept = 1) +
+  geom_rect(data = plot_rope, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+            fill = "#FFDC00", alpha = 0.3, inherit.aes = FALSE) +
+  annotate(geom = "label", x = 1, y = 0.65, 
+           label = "Region of practical equivalence\n(± 0.05 × SD y)",
+           size = pts(8)) +
+  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8, point_interval = "median_hdi") +
   guides(fill = FALSE) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("#FF851B", "#FFDC00")) +
-  labs(y = NULL, x = NULL) +
+  scale_y_discrete() +
+  scale_fill_manual(values = c("#FF851B", "#85144b", "#3D9970", "#001f3f")) +
+  labs(x = "Percent change in ratio of contentious aid in following year", y = NULL,
+       caption = "Point shows posterior median; lines show 80% and 95%\ncredible highest-density-interval") +
   theme_donors()
-
-plot_advocacy <- m_purpose_outcome_advocacy %>% 
-  gather_draws(b_advocacy) %>% 
-  mutate(.variable = dplyr::recode(.variable, 
-                                   b_advocacy = "Additional advocacy law, t - 1")) %>% 
-  mutate(.value = exp(.value) - 1) %>% 
-  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
-  geom_vline(xintercept = 0) +
-  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
-  guides(fill = FALSE) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("#85144b", "#F012BE")) +
-  labs(y = NULL, x = NULL) +
-  theme_donors()
-
-plot_entry <- m_purpose_outcome_entry %>% 
-  gather_draws(b_entry) %>% 
-  mutate(.variable = dplyr::recode(.variable, 
-                                   b_entry = "Additional entry law, t - 1")) %>% 
-  mutate(.value = exp(.value) - 1) %>% 
-  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
-  geom_vline(xintercept = 0) +
-  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
-  guides(fill = FALSE) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("#3D9970", "#2ECC40")) +
-  labs(y = NULL, x = "% change in proportion of contentious aid") +
-  theme_donors()
-
-plot_funding <- m_purpose_outcome_funding %>% 
-  gather_draws(b_funding) %>% 
-  mutate(.variable = dplyr::recode(.variable, 
-                                   b_funding = "Additional funding law, t - 1")) %>% 
-  mutate(.value = exp(.value) - 1) %>% 
-  ggplot(aes(y = fct_rev(.variable), x = .value, fill = fct_rev(.variable))) +
-  geom_vline(xintercept = 0) +
-  stat_halfeye(.width = c(0.8, 0.95), alpha = 0.8) +
-  guides(fill = FALSE) +
-  scale_x_continuous(labels = percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("#001f3f", "#0074D9")) +
-  labs(y = NULL, x = "% change in proportion of contentious aid") +
-  theme_donors()
-
-(plot_total + plot_advocacy) / (plot_entry + plot_funding)
 ```
 
-A one-unit change in X results in a relative change of $e^\beta$ in $\frac{\text{E(Proportion)}}{1 - \text{E(Proportion)}}$ - see <https://stats.stackexchange.com/questions/297659/interpretation-of-betareg-coef> - the ratio of contentious to non-contentious aid? the ratio of of contentious aid?
+lol what even
 
-See also <https://stats.stackexchange.com/a/230679/3025> and <https://static1.squarespace.com/static/58a7d1e52994ca398697a621/t/5a2ebc43e4966b0fab6b02de/1513012293857/betareg_politics.pdf>
+```{r h2-plots-defacto}
+plot_ccsi_coefs <- m_purpose_outcome_ccsi %>% 
+  map_dfr(~gather_draws(., b_v2xcs_ccsi), .id = "model") %>% 
+  mutate(.value = .value / 10) %>% 
+  mutate(model = comma(as.numeric(str_remove(model, "model_")))) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  left_join(coefs_nice, by = ".variable")
+
+ggplot(plot_ccsi_coefs, aes(x = .value, y = fct_rev(model), fill = model)) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi",
+               position = position_dodge(width = 0.5)) +
+  guides(fill = FALSE) +
+  labs(x = "Coefficient", y = "IPTW truncation point") +
+  theme_donors()
+```
+
+#### Tables
+
+```{r tbl-h2-dejure}
+# model_names <- paste0("(", 1:length(models_tbl_h2_outcome_dejure), ")")
+model_names <- 1:length(models_tbl_h2_outcome_dejure)
+names(models_tbl_h2_outcome_dejure) <- model_names
+
+treatment_names <- c("Treatment", "Total barriers (t)", "Barriers to advocacy (t)", 
+                     "Barriers to entry (t)", "Barriers to funding (t)")
+treatment_rows <- as.data.frame(t(treatment_names))
+attr(treatment_rows, "position") <- 1
+
+coef_list_outcome <- list(
+  "b_barriers_total" = "Treatment (t)",
+  "b_advocacy" = "Treatment (t)",
+  "b_entry" = "Treatment (t)",
+  "b_funding" = "Treatment (t)",
+  "b_v2xcs_ccsi" = "Core civil society index (t)",
+  "b_Intercept" = "Intercept",
+  "sd_gwcode__Intercept" = "σ country intercepts",
+  "sd_year__Intercept" = "σ year intercepts"
+)
+
+modelsummary(models_tbl_h2_outcome_dejure,
+             statistic = "[{conf.low}, {conf.high}]",
+             coef_map = coef_list_outcome,
+             add_rows = treatment_rows,
+             gof_omit = "ELPD",
+             escape = FALSE,
+             notes = list("Posterior means; 95% credible intervals in brackets")) %>% 
+  add_header_above(c(" " = 1, "Outcome: Logit prop contentious (t + 1)" = 4))
+```
+
+TODO: This is a mess
+
+```{r tbl-h2-defacto}
+truncation_thresholds <- names(models_tbl_h2_outcome_defacto) %>% 
+  str_extract("_\\d+") %>% 
+  str_remove("_") %>% 
+  as.numeric() %>% 
+  comma()
+
+truncation_names <- c("IPTW truncation threshold", truncation_thresholds)
+truncation_rows <- as.data.frame(t(truncation_names))
+attr(truncation_rows, "position") <- 1
+
+# model_names <- paste0("(", 1:length(models_tbl_h2_outcome_defacto), ")")
+model_names <- 1:length(models_tbl_h2_outcome_defacto)
+names(models_tbl_h2_outcome_defacto) <- model_names
+
+modelsummary(models_tbl_h2_outcome_defacto,
+             statistic = "[{conf.low}, {conf.high}]",
+             coef_map = coef_list_outcome,
+             add_rows = truncation_rows,
+             gof_omit = "ELPD",
+             escape = FALSE,
+             notes = list("Posterior means; 95% credible intervals in brackets")) %>% 
+  add_header_above(c(" " = 1, "Outcome: Outcome: Logit prop contentious (t + 1)" = 4))
+```
+
+
+#### Marginal effects
 
 ```{r h2-conditional-effects}
-m_purpose_outcome_total %>% 
-  conditional_effects()
+# brms::conditional_effects() can create spaghetti plots (single lines per
+# sample), but it stores them in an attribute slot named "spaghetti", which is
+# tricky to extract data from. This pulls the data frame from the attribute
+make_spaghetti <- function(model) {
+  raw_effects <- conditional_effects(model, spaghetti = TRUE, nsamples = 100)[[1]]
+  spaghetti_data <- attr(raw_effects, "spaghetti")
+  return(spaghetti_data)
+}
 
-m_purpose_outcome_advocacy %>% 
-  conditional_effects()
+inv_logit <- function(f, a) {
+  a <- (1 - 2 * a)
+  (a * (1 + exp(f)) + (exp(f) - 1)) / (2 * a * (1 + exp(f)))
+}
 
-m_purpose_outcome_entry %>% 
-  conditional_effects()
+make_spaghetti(m_purpose_outcome_total) %>% 
+  mutate(estimate__ = inv_logit(estimate__, a = 0.001)) %>% 
+  ggplot(aes(x = effect1__, y = estimate__, group = sample__)) +
+  geom_line(size = 0.25, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:9) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  guides(color = FALSE) +
+  labs(x = "Count of total legal barriers",
+       y = "Predicted proportion of\ncontentious aid in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 
-m_purpose_outcome_funding %>% 
-  conditional_effects()
+make_spaghetti(m_purpose_outcome_advocacy) %>% 
+  mutate(estimate__ = inv_logit(estimate__, a = 0.001)) %>% 
+  ggplot(aes(x = effect1__, y = estimate__, group = sample__)) +
+  geom_line(size = 0.25, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:2) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to advocacy",
+       y = "Predicted proportion of\ncontentious aid in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
+
+make_spaghetti(m_purpose_outcome_entry) %>% 
+  mutate(estimate__ = inv_logit(estimate__, a = 0.001)) %>% 
+  ggplot(aes(x = effect1__, y = estimate__, group = sample__)) +
+  geom_line(size = 0.25, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:3) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to entry",
+       y = "Predicted proportion of\ncontentious aid in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
+
+make_spaghetti(m_purpose_outcome_funding) %>% 
+  mutate(estimate__ = inv_logit(estimate__, a = 0.001)) %>% 
+  ggplot(aes(x = effect1__, y = estimate__, group = sample__)) +
+  geom_line(size = 0.25, color = "#FF4136") +
+  scale_x_continuous(breaks = 0:5) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  guides(color = FALSE) +
+  labs(x = "Count of barriers to funding",
+       y = "Predicted proportion of\ncontentious aid in following year") +
+  theme_donors() +
+  theme(panel.grid.major.x = element_blank())
 ```
